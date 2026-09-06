@@ -1,10 +1,50 @@
 * { box-sizing: border-box; }
 
+/* ===== 主题变量：浅色为默认，深色由 prefers-color-scheme 跟随系统切换 ===== */
+:root {
+  color-scheme: light dark;
+  --bg: #f4f6f8;
+  --text: #2c3e50;
+  --card-bg: #fff;
+  --card-border: #dde5ec;
+  --brand: #14508c;
+  --brand-soft: #e8f1fa;
+  --accent: #e67e22;
+  --muted: #6b7c8c;
+  --footer-text: #8a9ba8;
+  --hero-grad: linear-gradient(135deg, #14508c 0%, #1b6fb8 60%, #2a93d5 100%);
+  --hero-text: #fff;
+  --food-bg: #fff8f0;
+  --food-border: #f2ddc4;
+  --food-title: #b35c1e;
+  --shadow: rgba(20, 80, 140, .12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181d;
+    --text: #d5dde5;
+    --card-bg: #1e242c;
+    --card-border: #2c3640;
+    --brand: #6ab0f3;
+    --brand-soft: #1c3348;
+    --accent: #f0932b;
+    --muted: #8fa1b3;
+    --footer-text: #7d8da0;
+    --hero-grad: linear-gradient(135deg, #0d2c4d 0%, #155a8c 60%, #1e7ab8 100%);
+    --hero-text: #eef4fa;
+    --food-bg: #2a2118;
+    --food-border: #4a3a26;
+    --food-title: #f0a35e;
+    --shadow: rgba(0, 0, 0, .45);
+  }
+}
+
 body {
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
   margin: 0;
-  color: #2c3e50;
-  background: #f4f6f8;
+  color: var(--text);
+  background: var(--bg);
   line-height: 1.6;
 }
 
@@ -23,7 +63,7 @@ body {
 .logo {
   font-size: 20px;
   font-weight: 700;
-  color: #14508c;
+  color: var(--brand);
   text-decoration: none;
 }
 
@@ -34,12 +74,12 @@ body {
 }
 
 .main-nav a {
-  color: #14508c;
+  color: var(--brand);
   text-decoration: none;
   font-size: 15px;
 }
 
-.main-nav a:hover { color: #e67e22; }
+.main-nav a:hover { color: var(--accent); }
 
 /* ===== Hero 区块 ===== */
 .hero {
@@ -47,8 +87,8 @@ body {
   margin: 0 auto 24px;
   padding: 48px 16px;
   text-align: center;
-  color: #fff;
-  background: linear-gradient(135deg, #14508c 0%, #1b6fb8 60%, #2a93d5 100%);
+  color: var(--hero-text);
+  background: var(--hero-grad);
   border-radius: 0 0 16px 16px;
 }
 
@@ -81,15 +121,15 @@ main section {
 
 main h2 {
   font-size: 24px;
-  color: #14508c;
-  border-left: 5px solid #e67e22;
+  color: var(--brand);
+  border-left: 5px solid var(--accent);
   padding-left: 12px;
   margin: 0 0 16px;
 }
 
 footer {
   text-align: center;
-  color: #8a9ba8;
+  color: var(--footer-text);
   font-size: 14px;
   padding: 20px 0 28px;
 }
@@ -102,8 +142,8 @@ footer {
 }
 
 .stat-card {
-  background: #fff;
-  border: 1px solid #dde5ec;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 18px 16px;
   text-align: center;
@@ -112,13 +152,13 @@ footer {
 .stat-card strong {
   display: block;
   font-size: 26px;
-  color: #e67e22;
+  color: var(--accent);
   margin-bottom: 4px;
 }
 
 .stat-card span {
   font-size: 13px;
-  color: #6b7c8c;
+  color: var(--muted);
 }
 
 /* ===== 必游景点：6 卡 Grid 卡片墙 ===== */
@@ -129,8 +169,8 @@ footer {
 }
 
 .course-card {
-  background: #fff;
-  border: 1px solid #dde5ec;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 18px;
   display: flex;
@@ -140,7 +180,7 @@ footer {
 .course-card h3 {
   margin: 0 0 8px;
   font-size: 18px;
-  color: #14508c;
+  color: var(--brand);
 }
 
 .course-card p {
@@ -152,8 +192,8 @@ footer {
 .tag {
   align-self: flex-start;
   font-size: 12px;
-  color: #14508c;
-  background: #e8f1fa;
+  color: var(--brand);
+  background: var(--brand-soft);
   border-radius: 999px;
   padding: 3px 12px;
 }
@@ -166,8 +206,8 @@ footer {
 }
 
 .food-card {
-  background: #fff8f0;
-  border: 1px solid #f2ddc4;
+  background: var(--food-bg);
+  border: 1px solid var(--food-border);
   border-radius: 10px;
   padding: 16px;
 }
@@ -175,7 +215,7 @@ footer {
 .food-card h3 {
   margin: 0 0 8px;
   font-size: 16px;
-  color: #b35c1e;
+  color: var(--food-title);
 }
 
 .food-card p {
@@ -185,8 +225,8 @@ footer {
 
 /* ===== 旅行贴士 ===== */
 .tips-wrap {
-  background: #fff;
-  border: 1px solid #dde5ec;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
   border-radius: 10px;
   padding: 8px 20px;
 }
@@ -195,7 +235,7 @@ footer {
 
 .tips-list li { margin: 12px 0; font-size: 14.5px; }
 
-.tips-list strong { color: #14508c; }
+.tips-list strong { color: var(--brand); }
 
 /* ===== 响应式断点：平板 768px / 桌面 992px ===== */
 /* 手机为默认样式，向上渐进增强 */
@@ -227,10 +267,12 @@ footer {
 
   main h2 { font-size: 24px; }
 
-  .course-card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 20px rgba(20, 80, 140, .12);
+  .course-card {
+    transition: transform .2s ease, box-shadow .2s ease;
   }
 
-  .course-card { transition: transform .2s ease, box-shadow .2s ease; }
+  .course-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px var(--shadow);
+  }
 }
