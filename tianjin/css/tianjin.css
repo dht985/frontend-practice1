@@ -93,3 +93,106 @@ footer {
   font-size: 14px;
   padding: 20px 0 28px;
 }
+
+/* ===== 城市名片：数据卡 Grid ===== */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.stat-card {
+  background: #fff;
+  border: 1px solid #dde5ec;
+  border-radius: 10px;
+  padding: 18px 16px;
+  text-align: center;
+}
+
+.stat-card strong {
+  display: block;
+  font-size: 26px;
+  color: #e67e22;
+  margin-bottom: 4px;
+}
+
+.stat-card span {
+  font-size: 13px;
+  color: #6b7c8c;
+}
+
+/* ===== 必游景点：6 卡 Grid 卡片墙 ===== */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.course-card {
+  background: #fff;
+  border: 1px solid #dde5ec;
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+}
+
+.course-card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: #14508c;
+}
+
+.course-card p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  flex: 1;
+}
+
+.tag {
+  align-self: flex-start;
+  font-size: 12px;
+  color: #14508c;
+  background: #e8f1fa;
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+/* ===== 特色美食：Grid ===== */
+.food-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.food-card {
+  background: #fff8f0;
+  border: 1px solid #f2ddc4;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.food-card h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: #b35c1e;
+}
+
+.food-card p {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+/* ===== 旅行贴士 ===== */
+.tips-wrap {
+  background: #fff;
+  border: 1px solid #dde5ec;
+  border-radius: 10px;
+  padding: 8px 20px;
+}
+
+.tips-list { margin: 0; padding-left: 20px; }
+
+.tips-list li { margin: 12px 0; font-size: 14.5px; }
+
+.tips-list strong { color: #14508c; }
