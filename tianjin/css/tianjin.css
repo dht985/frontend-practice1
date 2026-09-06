@@ -54,8 +54,8 @@ body {
 
 .hero h1 {
   margin: 0;
-  font-size: 44px;
-  letter-spacing: 12px;
+  font-size: 32px;
+  letter-spacing: 6px;
 }
 
 .hero-sub {
@@ -196,3 +196,41 @@ footer {
 .tips-list li { margin: 12px 0; font-size: 14.5px; }
 
 .tips-list strong { color: #14508c; }
+
+/* ===== 响应式断点：平板 768px / 桌面 992px ===== */
+/* 手机为默认样式，向上渐进增强 */
+
+@media (min-width: 768px) {
+  .hero {
+    padding: 56px 24px;
+    border-radius: 0 0 20px 20px;
+  }
+
+  .hero h1 { font-size: 38px; letter-spacing: 9px; }
+
+  .hero-sub { font-size: 18px; }
+
+  main h2 { font-size: 22px; }
+}
+
+@media (min-width: 992px) {
+  .hero {
+    padding: 64px 24px;
+    margin-bottom: 40px;
+  }
+
+  .hero h1 { font-size: 44px; letter-spacing: 12px; }
+
+  .hero-intro { font-size: 16px; }
+
+  main section { margin-bottom: 40px; }
+
+  main h2 { font-size: 24px; }
+
+  .course-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(20, 80, 140, .12);
+  }
+
+  .course-card { transition: transform .2s ease, box-shadow .2s ease; }
+}
