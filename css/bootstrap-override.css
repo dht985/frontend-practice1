@@ -1,0 +1,5 @@
+/* Bootstrap 样式覆盖：必须加载在 bootstrap.min.css 之后，同优先级下后者生效 */
+/* 覆盖示例：让卡片标题统一品牌色 */
+.card .card-title {
+  color: #0b5ed7;
+}
