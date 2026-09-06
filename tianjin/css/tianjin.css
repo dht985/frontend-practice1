@@ -1,0 +1,95 @@
+* { box-sizing: border-box; }
+
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  margin: 0;
+  color: #2c3e50;
+  background: #f4f6f8;
+  line-height: 1.6;
+}
+
+/* ===== 导航：Flex 复杂布局，logo 靠左、链接靠右，窄屏自动换行 ===== */
+.nav-wrap {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logo {
+  font-size: 20px;
+  font-weight: 700;
+  color: #14508c;
+  text-decoration: none;
+}
+
+.main-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.main-nav a {
+  color: #14508c;
+  text-decoration: none;
+  font-size: 15px;
+}
+
+.main-nav a:hover { color: #e67e22; }
+
+/* ===== Hero 区块 ===== */
+.hero {
+  max-width: 1000px;
+  margin: 0 auto 24px;
+  padding: 48px 16px;
+  text-align: center;
+  color: #fff;
+  background: linear-gradient(135deg, #14508c 0%, #1b6fb8 60%, #2a93d5 100%);
+  border-radius: 0 0 16px 16px;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 44px;
+  letter-spacing: 12px;
+}
+
+.hero-sub {
+  margin: 10px 0 16px;
+  font-size: 17px;
+  opacity: .9;
+}
+
+.hero-intro {
+  max-width: 720px;
+  margin: 0 auto;
+  font-size: 15px;
+  opacity: .95;
+  text-align: justify;
+}
+
+/* ===== 通用区块 ===== */
+main section {
+  max-width: 1000px;
+  margin: 0 auto 32px;
+  padding: 0 16px;
+}
+
+main h2 {
+  font-size: 24px;
+  color: #14508c;
+  border-left: 5px solid #e67e22;
+  padding-left: 12px;
+  margin: 0 0 16px;
+}
+
+footer {
+  text-align: center;
+  color: #8a9ba8;
+  font-size: 14px;
+  padding: 20px 0 28px;
+}
