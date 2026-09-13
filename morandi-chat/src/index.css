@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: #5a524c;
+  background-color: #f7f3ee;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* —— 极淡的背景纹理：细颗粒点阵，只近看才察觉 —— */
+.bg-grain {
+  background-image: radial-gradient(rgba(140, 132, 124, 0.10) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* —— 滚动条 —— */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 132, 124, 0.28);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(140, 132, 124, 0.45); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* —— Markdown 排版 —— */
+.prose-md { font-size: 0.95rem; line-height: 1.75; }
+.prose-md p { margin: 0 0 0.6em; }
+.prose-md p:last-child { margin-bottom: 0; }
+.prose-md ul, .prose-md ol { margin: 0.4em 0; padding-left: 1.4em; }
+.prose-md li { margin: 0.15em 0; }
+.prose-md ul li::marker { color: #a8b29c; }
+.prose-md ol li::marker { color: #9aa48e; }
+.prose-md h1, .prose-md h2, .prose-md h3 {
+  font-weight: 600;
+  color: #4c4550;
+  margin: 0.7em 0 0.35em;
+  line-height: 1.4;
+}
+.prose-md h1 { font-size: 1.25em; }
+.prose-md h2 { font-size: 1.12em; }
+.prose-md h3 { font-size: 1.04em; }
+.prose-md a {
+  color: #8b73a0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(139, 115, 160, 0.4);
+}
+.prose-md strong { font-weight: 600; color: #4c4550; }
+.prose-md blockquote {
+  border-left: 3px solid #cfc1dc;
+  background: rgba(207, 193, 220, 0.18);
+  padding: 0.4em 0.9em;
+  border-radius: 0 8px 8px 0;
+  margin: 0.5em 0;
+  color: #6b636b;
+}
+.prose-md code:not(pre code) {
+  background: rgba(90, 82, 76, 0.08);
+  color: #8a6a8a;
+  padding: 0.12em 0.4em;
+  border-radius: 5px;
+  font-size: 0.88em;
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+.prose-md pre {
+  border-radius: 12px;
+  margin: 0.6em 0;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(247, 243, 238, 0.08);
+}
+.prose-md pre code {
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.prose-md table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.9em;
+}
+.prose-md th, .prose-md td {
+  border: 1px solid #dbd1d2;
+  padding: 0.4em 0.8em;
+}
+.prose-md th { background: #f0e4ea; }
+.prose-md hr { border: none; border-top: 1px solid #dbd1d2; margin: 0.8em 0; }
