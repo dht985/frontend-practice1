@@ -253,6 +253,15 @@ function StepIcon({ status }) {
       </svg>
     );
   }
+  if (status === "retrying") {
+    // 工具失败后等待模型自纠重试：桃色转圈
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+           strokeLinecap="round" className="w-3 h-3 mt-0.5 text-peachdeep animate-spin flex-shrink-0">
+        <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+      </svg>
+    );
+  }
   if (status === "rejected") {
     return (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
@@ -303,12 +312,30 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
       </button>
       {expanded && (
         <div className="px-2.5 pb-2 space-y-1">
-          {steps.map((s, i) => (
+          {steps.map((s, i) => {
+            // 同名工具的出现序号（第几次尝试）+ 后续是否还有同名步骤（重试是否已经开始）
+            let attemptNo = 0;
+            let laterSame = false;
+            for (let k = 0; k < steps.length; k++) {
+              if (steps[k].name !== s.name) continue;
+              if (k <= i) attemptNo += 1;
+              else laterSame = true;
+            }
+            // 失败后到模型下一次调用前：转圈提示正在等待自动重试；流结束仍无后续 = 最终失败
+            const waitingRetry = streaming && s.status === "error" && !laterSame;
+            const finalFail = !streaming && s.status === "error" && !laterSame;
+            return (
             <div key={s.id || i} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
-              <StepIcon status={s.status} />
+              <StepIcon status={waitingRetry ? "retrying" : s.status} />
               <div className="min-w-0 flex-1 break-all">
                 <div>
                   <span className="text-ink font-medium">{s.name}</span>
+                  {s.retry > 0 && (
+                    <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded
+                                     bg-peach/50 text-[9px] leading-tight text-peachdeep align-middle">
+                      ↻ 自动重试 {s.retry}/{s.maxRetry || s.retry}
+                    </span>
+                  )}
                   {s.source === "web" && <span className="text-muted/70">（联网搜索）</span>}
                   {s.args && s.args !== "{}" && (
                     <span className="text-muted/70 font-mono ml-1">{s.args}</span>
@@ -318,6 +345,15 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
                   )}
                   {s.status === "rejected" && (
                     <span className="text-muted/60 ml-1">已拒绝，未执行</span>
+                  )}
+                  {waitingRetry && (
+                    <span className="text-peachdeep ml-1">执行失败，等待模型自动重试…</span>
+                  )}
+                  {s.status === "error" && laterSame && (
+                    <span className="text-[#b08a86]/80 ml-1">第 {attemptNo} 次尝试失败</span>
+                  )}
+                  {finalFail && attemptNo > 1 && (
+                    <span className="text-[#b08a86] ml-1">重试 {attemptNo - 1} 次后仍失败</span>
                   )}
                 </div>
                 {/* 人工确认按钮 */}
@@ -353,7 +389,8 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

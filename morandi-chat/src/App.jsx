@@ -323,6 +323,8 @@ export default function App() {
           id: step.callId, name: step.name, source: step.source,
           args: step.args,
           status: step.needsConfirm ? "awaiting" : "running",
+          retry: step.retry || 0, // >0 表示这是报错后的第 N 次自动重试
+          maxRetry: step.maxRetry || 0,
         });
       } else if (step.type === "approved") {
         const s = node.toolSteps.find((x) => x.id === step.callId);
