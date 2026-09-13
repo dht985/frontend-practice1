@@ -33,8 +33,34 @@ function readAll() {
     }));
 }
 
+// 变更订阅：模型/面板/跨标签页任何写入都会通知 UI（同窗口 localStorage 不触发 storage 事件）
+const listeners = new Set();
+
+export function onTodosChange(cb) {
+  listeners.add(cb);
+  return () => listeners.delete(cb); // 返回退订函数
+}
+
+function notifyTodosChange() {
+  listeners.forEach((cb) => {
+    try {
+      cb();
+    } catch {
+      // 单个订阅者出错不影响其他订阅者
+    }
+  });
+}
+
+// 跨标签页写入：直接监听 storage 事件转发给订阅者
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key === TODOS_KEY) notifyTodosChange();
+  });
+}
+
 function writeAll(list) {
   localStorage.setItem(TODOS_KEY, JSON.stringify(list.slice(0, MAX_TODOS)));
+  notifyTodosChange();
 }
 
 // 列表默认未完成在前，同状态内新的在前，方便模型与用户阅读

@@ -3,6 +3,7 @@ import { BlobMark } from "./Decor";
 
 export default function Sidebar({
   open, onClose, conversations, activeId, onSelect, onNew, onDelete, onRename, onOpenSettings,
+  onOpenTodos, todoBadge = 0,
 }) {
   const [keyword, setKeyword] = useState("");
   const [editingId, setEditingId] = useState(null); // 正在重命名的对话 id
@@ -235,8 +236,25 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* 底部设置 */}
-      <div className="relative z-10 p-3 border-t border-line/70">
+      {/* 底部：待办 + 设置 */}
+      <div className="relative z-10 p-3 border-t border-line/70 space-y-0.5">
+        <button
+          onClick={onOpenTodos}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-muted text-sm
+                     hover:bg-cream/70 hover:text-ink transition-colors"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
+               strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          <span className="flex-1 text-left">待办事项</span>
+          {todoBadge > 0 && (
+            <span className="text-[10px] font-medium leading-none px-2 py-1 rounded-full bg-sage/50 border border-sagedeep/40 text-ink">
+              {todoBadge > 99 ? "99+" : todoBadge}
+            </span>
+          )}
+        </button>
         <button
           onClick={onOpenSettings}
           className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-muted text-sm

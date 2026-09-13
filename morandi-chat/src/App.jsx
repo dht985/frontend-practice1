@@ -7,6 +7,8 @@ import { streamChat, runFiber } from "./api/chat";
 import { prepareAttachments, kindOf, formatSize } from "./api/files";
 import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
 import { isNativeTool, runNativeTool } from "./api/nativeTools";
+import { todoList, onTodosChange } from "./api/todos";
+import TodoPanel from "./components/TodoPanel";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 
 const STORAGE_KEY = "morandi-chat-conversations";
@@ -157,6 +159,15 @@ export default function App() {
   const confirmResolversRef = useRef(new Map());
   // 仅把展示需要的信息放 state（callId → {name, args}），触发气泡渲染确认按钮
   const [pendingConfirms, setPendingConfirms] = useState({});
+  const [todoPanelOpen, setTodoPanelOpen] = useState(false);
+  const [todoBadge, setTodoBadge] = useState(0); // 侧边栏待办入口的未完成角标
+
+  // 待办角标：初始读一次，之后任何来源（模型工具写入/面板操作/其他标签页）变更都实时刷新
+  useEffect(() => {
+    const refresh = () => setTodoBadge(todoList().todos.filter((t) => !t.completed).length);
+    refresh();
+    return onTodosChange(refresh);
+  }, []);
 
   // 对话持久化：流式期间每个 token 都全量序列化+写盘会越来越卡，改为 400ms 防抖；
   // 页面关闭/切后台时立即落盘，避免丢尾部更新
@@ -987,6 +998,8 @@ export default function App() {
         onDelete={handleDelete}
         onRename={handleRename}
         onOpenSettings={() => { setSettingsOpen(true); setSidebarOpen(false); }}
+        onOpenTodos={() => { setTodoPanelOpen(true); setSidebarOpen(false); }}
+        todoBadge={todoBadge}
       />
       <ChatArea
         messages={messages}
@@ -1025,6 +1038,7 @@ export default function App() {
         onDelete={deleteProfile}
         onClose={() => setSettingsOpen(false)}
       />
+      <TodoPanel open={todoPanelOpen} onClose={() => setTodoPanelOpen(false)} />
       <WorkbenchPanel
         open={workbenchOpen}
         onClose={() => setWorkbenchOpen(false)}
