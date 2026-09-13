@@ -314,7 +314,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
                 <path d="M3 12h18" />
                 <path d="M12 3c2.6 2.5 3.9 5.6 3.9 9S14.6 18.5 12 21c-2.6-2.5-3.9-5.6-3.9-9S9.4 5.5 12 3Z" />
               </svg>
-              <span>正在联网搜索</span>
+              <span>{message.toolName ? `正在调用工具「${message.toolName}」` : "正在联网搜索"}</span>
               <span className="animate-blink">…</span>
             </div>
           )}

@@ -118,16 +118,76 @@ function SliderRow({ label, value, min, max, step, disabled, hint, onChange }) {
   );
 }
 
+// 单个工具的编辑表单（展开在列表项下方）
+function ToolEditor({ tool, onUpdate }) {
+  let schemaOk = true;
+  try {
+    JSON.parse(tool.parameters || "{}");
+  } catch {
+    schemaOk = false;
+  }
+  const nameOk = /^[A-Za-z0-9_-]+$/.test(tool.name.trim());
+  return (
+    <div className="px-3 pb-3 pt-2.5 border-t border-line/60 space-y-2">
+      <input
+        value={tool.name}
+        onChange={(e) => onUpdate({ name: e.target.value })}
+        placeholder="工具名，如 get_weather"
+        className="w-full px-2.5 py-1.5 border border-line rounded-lg outline-none text-[12px]
+                   text-ink bg-white focus:border-peach"
+      />
+      {!nameOk && (
+        <p className="text-[10px] text-[#b08a86] leading-snug">
+          名称只能包含英文字母、数字、下划线和中划线（发送时其他字符会自动替换）
+        </p>
+      )}
+      <input
+        value={tool.description}
+        onChange={(e) => onUpdate({ description: e.target.value })}
+        placeholder="一句话描述工具做什么，模型据此决定何时调用"
+        className="w-full px-2.5 py-1.5 border border-line rounded-lg outline-none text-[12px]
+                   text-ink bg-white focus:border-peach"
+      />
+      <textarea
+        value={tool.parameters}
+        onChange={(e) => onUpdate({ parameters: e.target.value })}
+        rows={3}
+        placeholder={'参数 JSON Schema，如 {"type":"object","properties":{"city":{"type":"string"}}}'}
+        className="w-full px-2.5 py-2 border border-line rounded-lg outline-none text-[11px] font-mono
+                   leading-relaxed text-ink bg-white focus:border-peach resize-y"
+      />
+      {!schemaOk && (
+        <p className="text-[10px] text-[#b08a86] leading-snug">
+          参数 Schema 不是合法 JSON，发送时将回退为空参数模式
+        </p>
+      )}
+      <textarea
+        value={tool.code}
+        onChange={(e) => onUpdate({ code: e.target.value })}
+        rows={6}
+        placeholder="// JS 函数体：通过 args.参数名 取参数，用 return 返回结果（支持 async/await）"
+        className="w-full px-2.5 py-2 border border-line rounded-lg outline-none text-[11px] font-mono
+                   leading-relaxed text-ink bg-white focus:border-peach resize-y"
+      />
+      <p className="text-[10px] text-muted/80 leading-snug">
+        函数体里通过 <code>args.参数名</code> 读取模型传入的参数，<code>return</code> 的值会转成 JSON 回传给模型。
+      </p>
+    </div>
+  );
+}
+
 export default function WorkbenchPanel({
   open, onClose, workbench, onChange, paramCaps, modelLabel, baseURL,
   responseFormat,
   promptLib, onAddTemplate, onDeleteTemplate,
+  toolLib, onAddTool, onUpdateTool, onDeleteTool,
 }) {
   const [tab, setTab] = useState("curl");
   const [copied, setCopied] = useState(false);
   const [tplPick, setTplPick] = useState("");
   const [saving, setSaving] = useState(false);
   const [tplName, setTplName] = useState("");
+  const [editingTool, setEditingTool] = useState(""); // 当前展开编辑的工具 id
 
   const set = (patch) => onChange({ ...workbench, ...patch });
   const allTemplates = useMemo(() => [...BUILTIN_PROMPTS, ...promptLib], [promptLib]);
@@ -367,6 +427,78 @@ export default function WorkbenchPanel({
                            leading-relaxed text-ink bg-white/70 focus:border-peach transition-colors resize-y"
               />
             )}
+          </section>
+
+          {/* —— 自定义工具（Function Calling） —— */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[13px] font-semibold text-ink">自定义工具（Function Calling）</h3>
+              <button
+                onClick={() => {
+                  const t = onAddTool();
+                  setEditingTool(t.id);
+                }}
+                className="text-[11px] text-peachdeep hover:text-ink px-2 py-0.5 rounded-md
+                           hover:bg-white/70 transition-colors"
+              >
+                ＋ 新建工具
+              </button>
+            </div>
+            <p className="text-[10px] text-muted/80 leading-snug">
+              启用的工具会随请求声明给模型，模型决定调用时在你本地浏览器执行（思路同 Google AI Studio），
+              请只添加自己写的代码。内置示例工具可启停、编辑或复制。
+            </p>
+            {toolLib.map((t) => (
+              <div key={t.id} className="border border-line/70 rounded-xl bg-white/50 overflow-hidden">
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <button
+                    onClick={() => setEditingTool(editingTool === t.id ? "" : t.id)}
+                    className="flex-1 min-w-0 text-left"
+                    title="点击展开 / 收起编辑"
+                  >
+                    <span className="text-[12.5px] text-ink font-medium truncate">{t.name || "未命名工具"}</span>
+                    {t.builtin && (
+                      <span className="ml-1.5 text-[9.5px] px-1 py-0.5 rounded bg-lilacsoft/70 text-ink/60 align-middle">
+                        内置
+                      </span>
+                    )}
+                    <p className="text-[10.5px] text-muted truncate">{t.description || "（无描述）"}</p>
+                  </button>
+                  {t.builtin && (
+                    <button
+                      onClick={() => {
+                        const nt = onAddTool(t);
+                        setEditingTool(nt.id);
+                      }}
+                      title="复制一份为自定义工具"
+                      className="text-[10.5px] text-muted hover:text-ink px-1.5 py-0.5 rounded-md
+                                 hover:bg-sand transition-colors flex-shrink-0"
+                    >
+                      复制
+                    </button>
+                  )}
+                  {!t.builtin && (
+                    <button
+                      onClick={() => {
+                        if (editingTool === t.id) setEditingTool("");
+                        onDeleteTool(t.id);
+                      }}
+                      title="删除该工具"
+                      className="text-muted/60 hover:text-[#b08a86] p-1 flex-shrink-0 transition-colors"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                           strokeLinecap="round" className="w-3 h-3">
+                        <path d="M18 6 6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                  <Toggle checked={t.enabled} onChange={(v) => onUpdateTool(t.id, { enabled: v })} />
+                </div>
+                {editingTool === t.id && (
+                  <ToolEditor tool={t} onUpdate={(patch) => onUpdateTool(t.id, patch)} />
+                )}
+              </div>
+            ))}
           </section>
 
           {/* —— 生成调用代码 —— */}

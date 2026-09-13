@@ -5,6 +5,7 @@ import Settings from "./components/Settings";
 import WorkbenchPanel from "./components/WorkbenchPanel";
 import { streamChat } from "./api/chat";
 import { prepareAttachments, kindOf, formatSize } from "./api/files";
+import { loadToolLib, saveToolLib } from "./api/tools";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 
 const STORAGE_KEY = "morandi-chat-conversations";
@@ -147,6 +148,7 @@ export default function App() {
     ...loadJSON(WORKBENCH_KEY, {}),
   }));
   const [promptLib, setPromptLib] = useState(() => loadJSON(PROMPTS_KEY, []));
+  const [toolLib, setToolLib] = useState(loadToolLib);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const abortRef = useRef(null); // 当前请求的 AbortController
   const userStoppedRef = useRef(false); // 标记是否用户手动停止（避免 onDone 覆盖 stopped 标记）
@@ -190,6 +192,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(PROMPTS_KEY, JSON.stringify(promptLib));
   }, [promptLib]);
+  // 自定义工具库（低频写入，直接持久化）
+  useEffect(() => {
+    saveToolLib(toolLib);
+  }, [toolLib]);
 
   const handleNew = () => {
     const id = Date.now().toString();
@@ -229,6 +235,26 @@ export default function App() {
   };
   const deletePromptTemplate = (id) => {
     setPromptLib((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // 自定义工具：新增（source 传入时为复制）/ 更新 / 删除（内置项不可删）
+  const addTool = (source) => {
+    const item = {
+      id: uid(),
+      name: source ? `${source.name}_copy` : "new_tool",
+      description: source?.description || "",
+      parameters: source?.parameters || '{"type":"object","properties":{}}',
+      code: source?.code || 'return "hello";',
+      enabled: true,
+      builtin: false,
+    };
+    setToolLib((prev) => [...prev, item]);
+    return item;
+  };
+  const updateTool = (id, patch) =>
+    setToolLib((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const deleteTool = (id) => {
+    setToolLib((prev) => prev.filter((t) => t.id !== id));
   };
 
   // 新增或更新一个档案，并切换为当前使用
@@ -481,6 +507,7 @@ export default function App() {
       ],
       config: activeConfig,
       webSearch: useWebSearch,
+      customTools: toolLib.filter((t) => t.enabled),
       structured: workbench.structured,
       schemaText: workbench.schemaText,
       genParams: buildGenParams(),
@@ -492,10 +519,11 @@ export default function App() {
           node.hint = "";
         });
       },
-      onStatus: (status) => {
-        if (status === "searching") {
+      onStatus: (status, toolName) => {
+        if (status === "searching" || status === "tool") {
           updateLastVisible(convId, (node) => {
             node.searching = true;
+            node.toolName = status === "tool" ? toolName : "";
             node.hint = "";
           });
         }
@@ -589,6 +617,7 @@ export default function App() {
         systemMessages: [...customSystemMessages(), buildTimeMessage()],
         config: activeConfig,
         webSearch: false,
+        customTools: toolLib.filter((t) => t.enabled),
         structured: workbench.structured,
         schemaText: workbench.schemaText,
         genParams: buildGenParams(),
@@ -655,6 +684,7 @@ export default function App() {
       systemMessages: [...customSystemMessages(), buildTimeMessage()],
       config: activeConfig,
       webSearch: false,
+      customTools: toolLib.filter((t) => t.enabled),
       genParams: buildGenParams(),
       signal: controller.signal,
       onChunk: (chunk) => {
@@ -806,6 +836,10 @@ export default function App() {
         promptLib={promptLib}
         onAddTemplate={addPromptTemplate}
         onDeleteTemplate={deletePromptTemplate}
+        toolLib={toolLib}
+        onAddTool={addTool}
+        onUpdateTool={updateTool}
+        onDeleteTool={deleteTool}
       />
     </div>
   );
