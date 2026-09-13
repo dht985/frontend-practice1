@@ -8,12 +8,12 @@
 //   2. 自定义 JS 工具（工作台定义）：声明随请求下发，tool_calls 由前端本地执行
 
 import { getProvider, getParamCaps } from "./providers";
-import { compileTools, runLocalTool } from "./tools";
+import { compileTools, runLocalTool, isRetryableError } from "./tools";
 
 const FORMULA_URI = "moonshot/web-search:latest";
 const MAX_TOOL_ROUNDS = 6; // 防止异常情况下工具调用无限循环
 const AGENT_MAX_ROUNDS = 10; // Agent 模式允许更多轮自主工具调用
-const TOOL_AUTO_RETRY = 1; // 工具报错后模型自纠重试的次数（与 agentPrompt「报错重试一次」一致，仅用于 UI 展示）
+const TOOL_AUTO_RETRY = 2; // 工具暂时性错误自动重试次数（指数退避：400ms → 800ms）
 
 let toolsCache = null;
 
@@ -146,7 +146,7 @@ async function streamOnce(messages, config, tools, onChunk, signal, genParams = 
 
 // 通过 Formula fiber 执行一次工具（web-search 为 protected，结果在 encrypted_output）
 // 同时尝试从响应中提取可读的搜索来源（title/url），供前端展示
-async function runFiber(config, name, args, signal) {
+export async function runFiber(config, name, args, signal) {
   const resp = await fetch(`${config.baseURL}/formulas/${FORMULA_URI}/fibers`, {
     method: "POST",
     headers: await authHeaders(config),
@@ -265,8 +265,7 @@ export async function streamChat({
 
     // 用副本维护完整多轮上下文（含文件 system 消息、tool_calls / role=tool 消息）
     const convo = [...systemMessages, ...structuredPrompt, ...messages];
-    // 工具失败计数（按工具名）：模型看到错误后再次调用同名工具即视为「自动重试」，用于 UI 提示
-    const failedByName = new Map();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     for (let round = 0; round <= maxRounds; round++) {
       const { content, toolCalls, usage } = await streamOnce(
@@ -286,18 +285,36 @@ export async function streamChat({
       // 逐个执行 tool_call 并以 role=tool 消息回传（id 必须一一对齐）
       for (const tc of toolCalls) {
         const name = tc.function?.name || "";
-        const argsPreview = String(tc.function?.arguments || "").slice(0, 80);
-        // 该工具此前失败过几次：>0 说明本次调用是模型看到报错后的自动重试
-        const retryNo = failedByName.get(name) || 0;
-        const retryInfo = retryNo > 0 ? { retry: retryNo, maxRetry: TOOL_AUTO_RETRY } : null;
+        const argsRaw = String(tc.function?.arguments || "");
+        const argsPreview = argsRaw.slice(0, 80);
         const localTool = custom.executors.get(name);
+
+        // 自动重试包装：对暂时性错误（网络/超时/5xx/429）按指数退避重试，
+        // 参数/权限/不存在等不可重试错误直接返回；AbortError 向上抛出中止整个生成
+        const runWithAutoRetry = async (execute) => {
+          let last = null;
+          let attempt = 0;
+          for (attempt = 0; attempt <= TOOL_AUTO_RETRY; attempt++) {
+            last = await execute();
+            if (!last.isError) break;
+            if (!last.retryable) break;
+            if (attempt >= TOOL_AUTO_RETRY) break;
+            onToolStep && onToolStep({
+              type: "retrying", callId: tc.id, name, source: localTool ? "local" : "web",
+              attempt: attempt + 1, maxRetries: TOOL_AUTO_RETRY,
+            });
+            await sleep(400 * Math.pow(2, attempt)); // 400ms → 800ms
+          }
+          return { ...last, attempt: attempt + 1 }; // 1-based：第几次尝试结束
+        };
+
         if (localTool) {
           // 自定义工具：前端本地执行（支持 async 函数体）
-          console.info(`[自定义工具] 本地执行：${name}`, tc.function.arguments, retryInfo || "");
+          console.info(`[自定义工具] 本地执行：${name}`, argsRaw);
           onStatus && onStatus("tool", name);
           onToolStep && onToolStep({
-            type: "start", callId: tc.id, name, source: "local", args: argsPreview,
-            needsConfirm: !!localTool.confirm, ...(retryInfo || {}),
+            type: "start", callId: tc.id, name, source: "local",
+            args: argsPreview, argsRaw, needsConfirm: !!localTool.confirm,
           });
 
           // 危险工具：执行前暂停等待人工确认；等待期间用户点了停止则按 AbortError 中止
@@ -316,7 +333,7 @@ export async function streamChat({
                 }
               });
               approved = await Promise.race([
-                Promise.resolve(onToolConfirm(tc.id, name, tc.function.arguments)),
+                Promise.resolve(onToolConfirm(tc.id, name, argsRaw)),
                 abortPromise,
               ]);
             }
@@ -336,47 +353,79 @@ export async function streamChat({
             onToolStep && onToolStep({ type: "approved", callId: tc.id, name });
           }
 
-          const out = await runLocalTool(localTool, tc.function.arguments);
-          const isErr = /^\s*\{\s*"error"\s*:/.test(String(out));
-          if (isErr) failedByName.set(name, retryNo + 1);
-          console.info(`[自定义工具] ${name} 返回：`, String(out).slice(0, 300));
+          const res = await runWithAutoRetry(() => runLocalTool(localTool, argsRaw));
+          const isErr = res.isError;
+          console.info(`[自定义工具] ${name} 返回：`, res.content.slice(0, 300));
           onToolStep && onToolStep({
             type: "result", callId: tc.id, name, source: "local",
-            result: String(out).slice(0, 120), error: isErr,
+            result: res.content.slice(0, 120), error: isErr,
+            attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY, retryable: res.retryable,
           });
-          convo.push({ role: "tool", tool_call_id: tc.id, content: out });
+          // 错误结果连同原因回传给模型，让模型有机会修正参数或换方案
+          let content = res.content;
+          if (isErr) {
+            let reason = "工具执行失败";
+            try { reason = JSON.parse(res.content).error || reason; } catch {}
+            const hint = res.retryable
+              ? `已自动重试 ${TOOL_AUTO_RETRY} 次仍失败`
+              : "该错误不可自动重试";
+            content = JSON.stringify({
+              error: `${reason}（${hint}）。请检查参数是否正确，或改用其他方式完成任务，不要重复调用同一工具。`,
+            });
+          }
+          convo.push({ role: "tool", tool_call_id: tc.id, content });
         } else {
           // 其余视为联网搜索 fiber
-          console.info(`[联网搜索] 执行 fiber：${name}`, tc.function.arguments, retryInfo || "");
+          console.info(`[联网搜索] 执行 fiber：${name}`, argsRaw);
           onStatus && onStatus("searching");
           onToolStep && onToolStep({
-            type: "start", callId: tc.id, name, source: "web", args: argsPreview,
-            ...(retryInfo || {}),
+            type: "start", callId: tc.id, name, source: "web", args: argsPreview, argsRaw,
           });
-          try {
-            const { result, sources } = await runFiber(config, name, tc.function.arguments, signal);
-            console.info(`[联网搜索] fiber 返回结果长度：${result.length}，来源数：${sources.length}`);
+
+          const execute = async () => {
+            try {
+              const { result, sources } = await runFiber(config, name, argsRaw, signal);
+              return { content: result, isError: false, sources };
+            } catch (err) {
+              if (err?.name === "AbortError") throw err; // 用户中止必须向上传播
+              const msg = String(err?.message || err || "联网搜索失败");
+              return {
+                content: JSON.stringify({ error: msg }),
+                isError: true,
+                retryable: isRetryableError(msg, err),
+                errorMsg: msg,
+              };
+            }
+          };
+          const res = await runWithAutoRetry(execute);
+
+          if (res.isError) {
+            const reason = res.errorMsg || "联网搜索失败";
+            console.warn(`[联网搜索] fiber 失败：${name}`, reason);
             onToolStep && onToolStep({
               type: "result", callId: tc.id, name, source: "web",
-              result: "已获取联网搜索结果", error: false,
+              result: `联网搜索失败：${reason}`.slice(0, 120), error: true,
+              attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY, retryable: res.retryable,
             });
-            if (sources.length && onSources) onSources(sources);
-            convo.push({ role: "tool", tool_call_id: tc.id, content: result });
-          } catch (err) {
-            // 用户中止必须继续抛出；其余网络/服务错误转成 tool 错误消息，让模型可以自纠重试或换个说法
-            if (err?.name === "AbortError") throw err;
-            const errMsg = String(err?.message || err || "联网搜索失败");
-            failedByName.set(name, retryNo + 1);
-            console.warn(`[联网搜索] fiber 失败：${name}`, errMsg);
-            onToolStep && onToolStep({
-              type: "result", callId: tc.id, name, source: "web",
-              result: `联网搜索失败：${errMsg}`.slice(0, 120), error: true,
-            });
+            const hint = res.retryable
+              ? `已自动重试 ${TOOL_AUTO_RETRY} 次仍失败`
+              : "该错误不可自动重试";
             convo.push({
               role: "tool",
               tool_call_id: tc.id,
-              content: JSON.stringify({ error: `联网搜索工具执行失败：${errMsg}。可以修正参数重试一次，仍失败就不要再次调用。` }),
+              content: JSON.stringify({
+                error: `联网搜索工具执行失败：${reason}（${hint}）。请修正参数重试，或换个查询方式，不要重复调用。`,
+              }),
             });
+          } else {
+            console.info(`[联网搜索] fiber 返回结果长度：${res.content.length}，来源数：${res.sources?.length || 0}`);
+            onToolStep && onToolStep({
+              type: "result", callId: tc.id, name, source: "web",
+              result: "已获取联网搜索结果", error: false,
+              attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY,
+            });
+            if (res.sources?.length && onSources) onSources(res.sources);
+            convo.push({ role: "tool", tool_call_id: tc.id, content: res.content });
           }
         }
       }

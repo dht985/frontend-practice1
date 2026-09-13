@@ -107,8 +107,31 @@ export function compileTools(tools) {
   return { declarations, executors };
 }
 
-// 本地执行一次工具调用，返回回传给模型的字符串内容
-// 执行出错时以 {"error": "..."} 回传，让模型看到原因后自行调整
+// 判断错误是否为可自动重试的暂时性错误（网络/超时/5xx/429 等）
+// 参数错误、权限错误、工具不存在、语法/运行时类型错误等不自动重试
+export function isRetryableError(msg, err) {
+  const s = String(msg || err?.message || "").toLowerCase();
+  // HTTP 状态码：429/5xx 可重试，其余 4xx 不可重试
+  const statusMatch = s.match(/\b(\d{3})\b/);
+  if (statusMatch) {
+    const code = Number(statusMatch[1]);
+    if (code === 429 || (code >= 500 && code <= 504)) return true;
+    if (code >= 400 && code < 500) return false;
+  }
+  // 网络/超时/限流等暂时性关键字
+  if (/timeout|timed\s*out|econnreset|econnrefused|etimedout|network|fetch|网络|超时|临时|暂时|temporar|rate\s*limit|too\s*many|unavailable|overloaded|bad\s*gateway|gateway\s*timeout|service\s*unavailable/.test(s)) {
+    return true;
+  }
+  // 明显不可重试：参数/权限/不存在/语法/引用/类型(非网络)
+  if (/invalid|参数|不合法|permission|权限|unauthor|forbidden|not\s*found|不存在|syntax|referenceerror|undefined\s+is\s+not|cannot\s+read|is\s+not\s+a\s+function|json\.parse|unexpected\s+token/.test(s)) {
+    return false;
+  }
+  // 未知错误默认不自动重试，避免无脑重试浪费时间
+  return false;
+}
+
+// 本地执行一次工具调用，返回 { content, isError, retryable }
+// content: 回传给模型的字符串内容；执行出错时以 {"error": "..."} 回传，让模型看到原因后自行调整
 export async function runLocalTool(tool, argsJson) {
   let args = {};
   try {
@@ -119,10 +142,15 @@ export async function runLocalTool(tool, argsJson) {
   try {
     const fn = new Function("args", tool.code);
     const out = await fn(args);
-    return typeof out === "string" ? out : JSON.stringify(out ?? null);
+    const content = typeof out === "string" ? out : JSON.stringify(out ?? null);
+    return { content, isError: false, retryable: false };
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
     console.warn(`[自定义工具] ${tool.name} 执行出错：${msg}`);
-    return JSON.stringify({ error: msg });
+    return {
+      content: JSON.stringify({ error: msg }),
+      isError: true,
+      retryable: isRetryableError(msg, err),
+    };
   }
 }

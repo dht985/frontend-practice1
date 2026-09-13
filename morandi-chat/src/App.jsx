@@ -3,9 +3,9 @@ import Sidebar from "./components/Sidebar";
 import ChatArea from "./components/ChatArea";
 import Settings from "./components/Settings";
 import WorkbenchPanel from "./components/WorkbenchPanel";
-import { streamChat } from "./api/chat";
+import { streamChat, runFiber } from "./api/chat";
 import { prepareAttachments, kindOf, formatSize } from "./api/files";
-import { loadToolLib, saveToolLib } from "./api/tools";
+import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 
 const STORAGE_KEY = "morandi-chat-conversations";
@@ -319,13 +319,28 @@ export default function App() {
     updateLastVisible(convId, (node) => {
       if (!Array.isArray(node.toolSteps)) node.toolSteps = [];
       if (step.type === "start") {
-        node.toolSteps.push({
-          id: step.callId, name: step.name, source: step.source,
-          args: step.args,
-          status: step.needsConfirm ? "awaiting" : "running",
-          retry: step.retry || 0, // >0 表示这是报错后的第 N 次自动重试
-          maxRetry: step.maxRetry || 0,
-        });
+        // 同一 callId 复用原行（手动重试时状态回退为执行中）
+        const existing = node.toolSteps.find((x) => x.id === step.callId);
+        if (existing) {
+          existing.status = step.needsConfirm ? "awaiting" : "running";
+          existing.result = "";
+          existing.retry = 0;
+        } else {
+          node.toolSteps.push({
+            id: step.callId, name: step.name, source: step.source,
+            args: step.args, argsRaw: step.argsRaw,
+            status: step.needsConfirm ? "awaiting" : "running",
+            retry: 0, maxRetry: step.maxRetries || 0,
+          });
+        }
+      } else if (step.type === "retrying") {
+        const s = node.toolSteps.find((x) => x.id === step.callId);
+        if (s) {
+          s.status = "retrying";
+          s.retry = step.attempt;
+          s.maxRetry = step.maxRetries;
+          s.result = "";
+        }
       } else if (step.type === "approved") {
         const s = node.toolSteps.find((x) => x.id === step.callId);
         if (s) s.status = "running";
@@ -334,9 +349,68 @@ export default function App() {
         if (s) {
           s.status = step.rejected ? "rejected" : step.error ? "error" : "done";
           s.result = step.result;
+          s.retry = step.attempt ? step.attempt - 1 : s.retry; // 已完成的重试次数
+          s.maxRetry = step.maxRetries || s.maxRetry;
+          s.canRetry = !!step.error; // 失败步骤允许手动重新尝试
         }
       }
     });
+  };
+
+  // 手动重新尝试某个失败的工具步骤：复用原工具与参数
+  const retryToolStep = async (callId) => {
+    const conv = conversations.find((c) => c.id === activeId);
+    if (!conv) return;
+    const chain = visibleChain(conv.tree);
+    const node = chain[chain.length - 1]?.node;
+    const step = node?.toolSteps?.find((s) => s.id === callId);
+    if (!step) return;
+    // 先把该行状态切回执行中
+    updateLastVisible(conv.id, (n) => {
+      const s = n.toolSteps?.find((x) => x.id === callId);
+      if (s) { s.status = "running"; s.result = ""; s.canRetry = false; }
+    });
+    try {
+      let resultStr = "";
+      let isError = false;
+      let sources = [];
+      if (step.source === "web") {
+        const { result, sources: src } = await runFiber(activeConfig, step.name, step.argsRaw || "{}");
+        resultStr = result;
+        sources = src || [];
+      } else {
+        const tool = toolLib.find((t) => t.name === step.name);
+        if (!tool) throw new Error("工具不存在或已被删除");
+        const res = await runLocalTool(tool, step.argsRaw || "{}");
+        resultStr = res.content;
+        isError = res.isError;
+      }
+      updateLastVisible(conv.id, (n) => {
+        const s = n.toolSteps?.find((x) => x.id === callId);
+        if (s) {
+          s.status = isError ? "error" : "done";
+          s.result = String(resultStr).slice(0, 120);
+          s.canRetry = isError;
+        }
+      });
+      if (sources.length) {
+        updateLastVisible(conv.id, (n) => {
+          const map = new Map((n.sources || []).map((x) => [x.url, x]));
+          sources.forEach((x) => map.set(x.url, x));
+          n.sources = Array.from(map.values());
+        });
+      }
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      updateLastVisible(conv.id, (n) => {
+        const s = n.toolSteps?.find((x) => x.id === callId);
+        if (s) {
+          s.status = "error";
+          s.result = String(err?.message || err).slice(0, 120);
+          s.canRetry = true;
+        }
+      });
+    }
   };
 
   // 危险工具确认：chat.js 在调用前 await 这个 Promise，直到用户点允许/拒绝
@@ -935,6 +1009,7 @@ export default function App() {
         onSwitchProfile={activateProfile}
         pendingConfirms={pendingConfirms}
         onRespondToolConfirm={respondToolConfirm}
+        onRetryTool={retryToolStep}
       />
       <Settings
         open={settingsOpen}

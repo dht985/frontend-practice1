@@ -281,7 +281,7 @@ function StepIcon({ status }) {
   );
 }
 
-function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
+function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryTool }) {
   const [open, setOpen] = useState(false);
   const hasAwaiting = steps.some((s) => s.status === "awaiting");
   const expanded = streaming || open || hasAwaiting;
@@ -313,47 +313,40 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
       {expanded && (
         <div className="px-2.5 pb-2 space-y-1">
           {steps.map((s, i) => {
-            // 同名工具的出现序号（第几次尝试）+ 后续是否还有同名步骤（重试是否已经开始）
-            let attemptNo = 0;
-            let laterSame = false;
-            for (let k = 0; k < steps.length; k++) {
-              if (steps[k].name !== s.name) continue;
-              if (k <= i) attemptNo += 1;
-              else laterSame = true;
-            }
-            // 失败后到模型下一次调用前：转圈提示正在等待自动重试；流结束仍无后续 = 最终失败
-            const waitingRetry = streaming && s.status === "error" && !laterSame;
-            const finalFail = !streaming && s.status === "error" && !laterSame;
+            // 状态文案：执行中 / 自动重试中 / 调用成功 / 最终失败
+            let statusText = null;
+            if (s.status === "running") statusText = "执行中…";
+            else if (s.status === "retrying")
+              statusText = `自动重试中（重试 ${s.retry}/${s.maxRetry || s.retry}）`;
+            else if (s.status === "awaiting") statusText = "等待你的确认…";
+            else if (s.status === "rejected") statusText = "已拒绝，未执行";
+            else if (s.status === "done") statusText = "调用成功";
+            else if (s.status === "error")
+              statusText = s.retry > 0 ? `重试 ${s.retry} 次后仍失败` : "最终失败";
             return (
             <div key={s.id || i} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
-              <StepIcon status={waitingRetry ? "retrying" : s.status} />
+              <StepIcon status={s.status} />
               <div className="min-w-0 flex-1 break-all">
                 <div>
                   <span className="text-ink font-medium">{s.name}</span>
-                  {s.retry > 0 && (
-                    <span className="ml-1 inline-flex items-center gap-0.5 px-1 py-px rounded
-                                     bg-peach/50 text-[9px] leading-tight text-peachdeep align-middle">
-                      ↻ 自动重试 {s.retry}/{s.maxRetry || s.retry}
-                    </span>
-                  )}
                   {s.source === "web" && <span className="text-muted/70">（联网搜索）</span>}
                   {s.args && s.args !== "{}" && (
                     <span className="text-muted/70 font-mono ml-1">{s.args}</span>
                   )}
-                  {s.status === "awaiting" && (
-                    <span className="text-peachdeep/90 ml-1">等待你的确认…</span>
-                  )}
-                  {s.status === "rejected" && (
-                    <span className="text-muted/60 ml-1">已拒绝，未执行</span>
-                  )}
-                  {waitingRetry && (
-                    <span className="text-peachdeep ml-1">执行失败，等待模型自动重试…</span>
-                  )}
-                  {s.status === "error" && laterSame && (
-                    <span className="text-[#b08a86]/80 ml-1">第 {attemptNo} 次尝试失败</span>
-                  )}
-                  {finalFail && attemptNo > 1 && (
-                    <span className="text-[#b08a86] ml-1">重试 {attemptNo - 1} 次后仍失败</span>
+                  {statusText && (
+                    <span
+                      className={`ml-1 ${
+                        s.status === "error"
+                          ? "text-[#b08a86] font-medium"
+                          : s.status === "retrying" || s.status === "awaiting"
+                          ? "text-peachdeep/90"
+                          : s.status === "done"
+                          ? "text-sagedeep"
+                          : "text-muted/70"
+                      }`}
+                    >
+                      {statusText}
+                    </span>
                   )}
                 </div>
                 {/* 人工确认按钮 */}
@@ -377,7 +370,7 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
                     </button>
                   </div>
                 )}
-                {/* 结果预览：执行中也实时显示已完成步骤的结果 */}
+                {/* 结果 / 失败原因 */}
                 {s.status === "done" && s.result && (
                   <span className="block text-muted/70 font-mono pl-3.5">→ {s.result}</span>
                 )}
@@ -386,6 +379,23 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
                 )}
                 {s.status === "rejected" && s.result && (
                   <span className="block text-muted/50 font-mono pl-3.5">→ {s.result}</span>
+                )}
+                {/* 手动重新尝试：失败后复用原工具与参数再跑一次 */}
+                {s.status === "error" && s.canRetry && onRetryTool && (
+                  <button
+                    type="button"
+                    onClick={() => onRetryTool(s.id)}
+                    className="mt-1 ml-3.5 px-2 py-0.5 rounded-md border border-line
+                               text-[10.5px] text-muted hover:text-ink hover:border-sagedeep/50
+                               hover:bg-sage/30 transition-colors inline-flex items-center gap-1"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                         strokeLinecap="round" strokeLinejoin="round" className="w-2.5 h-2.5">
+                      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                      <path d="M3 3v5h5" />
+                    </svg>
+                    重新尝试
+                  </button>
                 )}
               </div>
             </div>
@@ -397,7 +407,7 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
   );
 }
 
-export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm }) {
+export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm, onRetryTool }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const isError = !isUser && String(message.content).startsWith("⚠️");
@@ -487,6 +497,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
               streaming={message.streaming}
               pendingConfirms={pendingConfirms}
               onRespond={onRespondToolConfirm}
+              onRetryTool={onRetryTool}
             />
           ) : message.searching ? (
             <div className="flex items-center gap-1.5 text-xs text-muted mb-1.5 not-prose">
