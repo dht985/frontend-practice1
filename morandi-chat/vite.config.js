@@ -1,9 +1,10 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import fetchProxy from './fetch-proxy.js'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), fetchProxy()],
   server: {
     // 同时监听 127.0.0.1 和局域网地址：连 VPN 时无论走环回还是局域网 IP 都能访问
     host: true,

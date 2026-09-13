@@ -82,8 +82,9 @@ function sanitizeToolName(name, used) {
 }
 
 // 把启用的工具编译成 OpenAI function 声明 + 本地执行器映射（名称 → 工具项）
-export function compileTools(tools) {
-  const used = new Set();
+// reserved：内置工具占用的名称，用户自定义工具重名时自动改名，避免声明冲突
+export function compileTools(tools, reserved = []) {
+  const used = new Set(reserved);
   const declarations = [];
   const executors = new Map();
   for (const t of tools || []) {

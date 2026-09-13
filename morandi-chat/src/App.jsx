@@ -6,6 +6,7 @@ import WorkbenchPanel from "./components/WorkbenchPanel";
 import { streamChat, runFiber } from "./api/chat";
 import { prepareAttachments, kindOf, formatSize } from "./api/files";
 import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
+import { isNativeTool, runNativeTool } from "./api/nativeTools";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 
 const STORAGE_KEY = "morandi-chat-conversations";
@@ -378,6 +379,11 @@ export default function App() {
         const { result, sources: src } = await runFiber(activeConfig, step.name, step.argsRaw || "{}");
         resultStr = result;
         sources = src || [];
+      } else if (isNativeTool(step.name)) {
+        // 预置内置工具（fetch_url/todo_list），手动重试即用户显式确认，不再弹写操作确认框
+        const res = await runNativeTool(step.name, step.argsRaw || "{}");
+        resultStr = res.content;
+        isError = res.isError;
       } else {
         const tool = toolLib.find((t) => t.name === step.name);
         if (!tool) throw new Error("工具不存在或已被删除");
@@ -459,8 +465,8 @@ export default function App() {
     }
     const useWebSearch = webSearch && activeCaps.webSearch;
     const enabledTools = toolLib.filter((t) => t.enabled);
-    // Agent 模式必须有可用工具（自定义工具或联网搜索），否则退化为普通对话
-    const useAgent = agentMode && (useWebSearch || enabledTools.length > 0);
+    // Agent 模式：预置内置工具（fetch_url/todo_list）始终可用，其余为自定义工具或联网搜索
+    const useAgent = agentMode;
 
     // 没有活动对话则先建一个，直接用返回的 id（避免 setState 异步时序问题）
     const convId = activeId || handleNew();
@@ -989,7 +995,7 @@ export default function App() {
         isStreaming={isStreaming}
         model={`${getProvider(activeConfig.provider).name} · ${activeConfig.model || "未设置模型"}`}
         webSearchAvailable={activeCaps.webSearch}
-        agentAvailable={activeCaps.webSearch || toolLib.some((t) => t.enabled)}
+        agentAvailable={true /* 预置内置工具 fetch_url/todo_list 始终可用 */}
         onSend={handleSend}
         onStop={handleStop}
         onContinue={handleContinue}

@@ -9,6 +9,7 @@
 
 import { getProvider, getParamCaps } from "./providers";
 import { compileTools, runLocalTool, isRetryableError } from "./tools";
+import { NATIVE_TOOL_DECLS, isNativeTool, nativeNeedsConfirm, runNativeTool } from "./nativeTools";
 
 const FORMULA_URI = "moonshot/web-search:latest";
 const MAX_TOOL_ROUNDS = 6; // 防止异常情况下工具调用无限循环
@@ -223,15 +224,17 @@ export async function streamChat({
     if (webSearch && !caps.webSearch) {
       console.info("[联网搜索] 当前服务商不支持，已忽略该选项");
     }
-    // 自定义 JS 工具（工作台定义，本地执行）→ OpenAI function 声明
-    const custom = compileTools(customTools);
+    // 自定义 JS 工具（工作台定义，本地执行）→ OpenAI function 声明（内置工具名保留，用户工具重名自动改名）
+    const nativeNames = NATIVE_TOOL_DECLS.map((d) => d.function.name);
+    const custom = compileTools(customTools, nativeNames);
     if (custom.declarations.length) {
       console.info(
         `[自定义工具] 已启用 ${custom.declarations.length} 个：`,
         custom.declarations.map((d) => d.function.name)
       );
     }
-    const toolDecls = [...(wsTools || []), ...custom.declarations];
+    // 工具声明：联网搜索 + 预置内置工具（fetch_url/todo_list，始终可用）+ 用户自定义工具
+    const toolDecls = [...(wsTools || []), ...NATIVE_TOOL_DECLS, ...custom.declarations];
     console.info(
       `[请求] 服务商：${config.provider}，模型：${config.model}，联网搜索：${!!wsTools}，自定义工具：${custom.declarations.length} 个`
     );
@@ -287,7 +290,12 @@ export async function streamChat({
         const name = tc.function?.name || "";
         const argsRaw = String(tc.function?.arguments || "");
         const argsPreview = argsRaw.slice(0, 80);
+        // 路由优先级：预置内置工具（fetch_url/todo_list）→ 用户自定义 JS 工具 → 联网搜索 fiber
+        const native = isNativeTool(name);
         const localTool = custom.executors.get(name);
+        const isLocalExec = native || !!localTool;
+        // 确认策略：自定义工具看 confirm 标记；内置工具按参数判定（todo_list 写操作需确认）
+        const needConfirm = native ? nativeNeedsConfirm(name, argsRaw) : !!localTool?.confirm;
 
         // 自动重试包装：对暂时性错误（网络/超时/5xx/429）按指数退避重试，
         // 参数/权限/不存在等不可重试错误直接返回；AbortError 向上抛出中止整个生成
@@ -300,7 +308,7 @@ export async function streamChat({
             if (!last.retryable) break;
             if (attempt >= TOOL_AUTO_RETRY) break;
             onToolStep && onToolStep({
-              type: "retrying", callId: tc.id, name, source: localTool ? "local" : "web",
+              type: "retrying", callId: tc.id, name, source: isLocalExec ? "local" : "web",
               attempt: attempt + 1, maxRetries: TOOL_AUTO_RETRY,
             });
             await sleep(400 * Math.pow(2, attempt)); // 400ms → 800ms
@@ -308,17 +316,17 @@ export async function streamChat({
           return { ...last, attempt: attempt + 1 }; // 1-based：第几次尝试结束
         };
 
-        if (localTool) {
-          // 自定义工具：前端本地执行（支持 async 函数体）
-          console.info(`[自定义工具] 本地执行：${name}`, argsRaw);
+        if (isLocalExec) {
+          // 本地执行工具（预置内置或用户自定义，均支持 async）
+          console.info(`[${native ? "内置工具" : "自定义工具"}] 本地执行：${name}`, argsRaw);
           onStatus && onStatus("tool", name);
           onToolStep && onToolStep({
             type: "start", callId: tc.id, name, source: "local",
-            args: argsPreview, argsRaw, needsConfirm: !!localTool.confirm,
+            args: argsPreview, argsRaw, needsConfirm: needConfirm,
           });
 
-          // 危险工具：执行前暂停等待人工确认；等待期间用户点了停止则按 AbortError 中止
-          if (localTool.confirm) {
+          // 危险/写操作：执行前暂停等待人工确认；等待期间用户点了停止则按 AbortError 中止
+          if (needConfirm) {
             let approved = false;
             if (onToolConfirm) {
               const abortPromise = new Promise((_, reject) => {
@@ -338,7 +346,7 @@ export async function streamChat({
               ]);
             }
             if (!approved) {
-              console.info(`[自定义工具] 用户拒绝调用：${name}`);
+              console.info(`[本地工具] 用户拒绝调用：${name}`);
               onToolStep && onToolStep({
                 type: "result", callId: tc.id, name, source: "local",
                 result: "用户拒绝了本次工具调用", rejected: true,
@@ -353,9 +361,11 @@ export async function streamChat({
             onToolStep && onToolStep({ type: "approved", callId: tc.id, name });
           }
 
-          const res = await runWithAutoRetry(() => runLocalTool(localTool, argsRaw));
+          const executeOnce = () =>
+            native ? runNativeTool(name, argsRaw, { signal }) : runLocalTool(localTool, argsRaw);
+          const res = await runWithAutoRetry(executeOnce);
           const isErr = res.isError;
-          console.info(`[自定义工具] ${name} 返回：`, res.content.slice(0, 300));
+          console.info(`[本地工具] ${name} 返回：`, res.content.slice(0, 300));
           onToolStep && onToolStep({
             type: "result", callId: tc.id, name, source: "local",
             result: res.content.slice(0, 120), error: isErr,
