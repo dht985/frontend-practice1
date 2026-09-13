@@ -1,43 +1,232 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>课程展示</title>
-  <link rel="stylesheet" href="css/courses.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>前端练习项目导航</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 50px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .projects-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .project-card {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .project-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .project-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .project-header h2 {
+            font-size: 1.5em;
+            margin-bottom: 5px;
+        }
+
+        .project-header .tag {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            margin-top: 8px;
+        }
+
+        .project-body {
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .project-description {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+
+        .project-links {
+            display: flex;
+            gap: 10px;
+            margin-top: auto;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            text-align: center;
+            cursor: pointer;
+            font-size: 0.95em;
+            text-decoration: none;
+            transition: all 0.3s;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: scale(1.05);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            opacity: 0.8;
+        }
+
+        .footer p {
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 600px) {
+            .header h1 {
+                font-size: 1.8em;
+            }
+
+            .projects-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .project-links {
+                flex-direction: column;
+            }
+        }
+    </style>
 </head>
 <body>
-  <header class="site-header">
-    <div class="nav-wrap">
-      <a class="logo" href="#">前端课程墙</a>
-      <nav class="main-nav">
-        <a href="#courses">全部课程</a>
-        <a href="#about">关于</a>
-      </nav>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 前端练习项目</h1>
+            <p>欢迎查看我的前端练习作品</p>
+        </div>
+
+        <div class="projects-grid">
+            <!-- Morandi Chat 项目 -->
+            <div class="project-card">
+                <div class="project-header">
+                    <h2>💬 Morandi Chat</h2>
+                    <span class="tag">React + Vite</span>
+                </div>
+                <div class="project-body">
+                    <p class="project-description">
+                        一个现代化的聊天应用，使用 React 和 Vite 构建，采用 Tailwind CSS 美化界面。
+                    </p>
+                    <div class="project-links">
+                        <a href="./morandi-chat/" class="btn btn-primary">查看项目</a>
+                        <a href="https://github.com/dht985/frontend-practice1/tree/main/morandi-chat" class="btn btn-secondary">源代码</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tianjin 项目 -->
+            <div class="project-card">
+                <div class="project-header">
+                    <h2>🏙️ Tianjin</h2>
+                    <span class="tag">HTML + CSS</span>
+                </div>
+                <div class="project-body">
+                    <p class="project-description">
+                        天津城市介绍页面，展示天津的历史、文化和旅游景点信息。
+                    </p>
+                    <div class="project-links">
+                        <a href="./tianjin/" class="btn btn-primary">查看项目</a>
+                        <a href="https://github.com/dht985/frontend-practice1/tree/main/tianjin" class="btn btn-secondary">源代码</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bootstrap 项目 -->
+            <div class="project-card">
+                <div class="project-header">
+                    <h2>🎯 Bootstrap</h2>
+                    <span class="tag">Bootstrap 5</span>
+                </div>
+                <div class="project-body">
+                    <p class="project-description">
+                        使用 Bootstrap 框架进行的前端练习，展示响应式设计和 Bootstrap 组件的使用。
+                    </p>
+                    <div class="project-links">
+                        <a href="./bootstrap.html" class="btn btn-primary">查看项目</a>
+                        <a href="https://github.com/dht985/frontend-practice1/blob/main/bootstrap.html" class="btn btn-secondary">源代码</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>📖 更多项目敬请期待... | 💡 持续学习中...</p>
+        </div>
     </div>
-  </header>
-  <main>
-    <section id="courses">
-      <h2>全部课程</h2>
-      <div class="card-grid">
-        <article class="course-card">
-          <h3>HTML入门</h3>
-          <p>结构与语义，页面一切的起点。</p>
-          <a href="#">查看详情</a>
-        </article>
-        <article class="course-card">
-          <h3>CSS布局</h3>
-          <p>Flex、Grid与响应式设计。</p>
-          <a href="#">查看详情</a>
-        </article>
-        <article class="course-card">
-          <h3>JavaScript基础</h3>
-          <p>让页面动起来的第一门语言。</p>
-          <a href="#">查看详情</a>
-        </article>
-      </div>
-    </section>
-  </main>
-  <footer><p>课程演示案例 · 纯CSS版</p></footer>
 </body>
 </html>
