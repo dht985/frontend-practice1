@@ -141,7 +141,9 @@ export async function runLocalTool(tool, argsJson) {
     // 模型给的参数不是合法 JSON，按空参数执行
   }
   try {
-    const fn = new Function("args", tool.code);
+    // 必须用 AsyncFunction 构造器，普通 new Function 的函数体内不允许 await
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const fn = new AsyncFunction("args", tool.code);
     const out = await fn(args);
     const content = typeof out === "string" ? out : JSON.stringify(out ?? null);
     return { content, isError: false, retryable: false };
