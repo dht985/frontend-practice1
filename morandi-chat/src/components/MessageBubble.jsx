@@ -222,6 +222,78 @@ function CodeBlock({ language, children }) {
   );
 }
 
+// Agent 工具调用步骤：生成中实时显示进度，完成后折叠为「工具调用 · N 步」可展开详情
+function ToolSteps({ steps, streaming }) {
+  const [open, setOpen] = useState(false);
+  const expanded = streaming || open;
+  return (
+    <div className="mb-1.5 not-prose rounded-xl border border-line/60 bg-white/40 overflow-hidden">
+      <button
+        type="button"
+        disabled={streaming}
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted
+                   hover:text-ink disabled:cursor-default transition-colors"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 text-sagedeep flex-shrink-0">
+          <path d="M12 2.5c.35 0 .66.22.78.55l1.35 3.7c.68 1.87 2.1 3.29 3.97 3.97l3.7 1.35c.33.12.55.43.55.78s-.22.66-.55.78l-3.7 1.35c-1.87.68-3.29 2.1-3.97 3.97l-1.35 3.7a.84.84 0 0 1-1.56 0l-1.35-3.7c-.68-1.87-2.1-3.29-3.97-3.97l-3.7-1.35a.84.84 0 0 1 0-1.56l3.7-1.35c1.87-.68 3.29-2.1 3.97-3.97l1.35-3.7c.12-.33.43-.55.78-.55Z" />
+        </svg>
+        <span>工具调用 · {steps.length} 步</span>
+        {streaming
+          ? <span className="animate-blink">…</span>
+          : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 strokeLinecap="round" strokeLinejoin="round"
+                 className={`w-3 h-3 ml-auto transition-transform ${open ? "rotate-180" : ""}`}>
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          )}
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2 space-y-1">
+          {steps.map((s, i) => (
+            <div key={s.id || i} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+              {s.status === "running" ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+                     strokeLinecap="round" className="w-3 h-3 mt-0.5 text-muted animate-spin flex-shrink-0">
+                  <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+                </svg>
+              ) : s.status === "error" ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                     strokeLinecap="round" className="w-3 h-3 mt-0.5 text-[#b08a86] flex-shrink-0">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 8v5" />
+                  <path d="M12 16h.01" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+                     strokeLinecap="round" strokeLinejoin="round"
+                     className="w-3 h-3 mt-0.5 text-sagedeep flex-shrink-0">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              )}
+              <div className="min-w-0 break-all">
+                <span className="text-ink font-medium">{s.name}</span>
+                {s.source === "web" && <span className="text-muted/70">（联网搜索）</span>}
+                {s.args && s.args !== "{}" && (
+                  <span className="text-muted/70 font-mono ml-1">{s.args}</span>
+                )}
+                {/* 结果预览仅在生成完成后展开时显示，避免流式期间抖动 */}
+                {!streaming && s.status === "done" && s.result && (
+                  <span className="block text-muted/70 font-mono pl-3.5">→ {s.result}</span>
+                )}
+                {!streaming && s.status === "error" && s.result && (
+                  <span className="block text-[#b08a86] font-mono pl-3.5">→ {s.result}</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
@@ -306,7 +378,9 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
             </span>
           )}
 
-          {message.searching && (
+          {message.toolSteps?.length > 0 ? (
+            <ToolSteps steps={message.toolSteps} streaming={message.streaming} />
+          ) : message.searching ? (
             <div className="flex items-center gap-1.5 text-xs text-muted mb-1.5 not-prose">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
                    strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
@@ -317,7 +391,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
               <span>{message.toolName ? `正在调用工具「${message.toolName}」` : "正在联网搜索"}</span>
               <span className="animate-blink">…</span>
             </div>
-          )}
+          ) : null}
           {jsonMsg !== null ? (
             <JsonPanel data={jsonMsg} raw={String(message.content).trim()} />
           ) : message.content ? (
@@ -336,7 +410,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
             >
               {message.content}
             </ReactMarkdown>
-          ) : message.streaming && !message.searching && !message.hint ? (
+          ) : message.streaming && !message.searching && !message.hint && !message.toolSteps?.length ? (
             <span className="inline-flex items-center gap-1 text-muted text-sm">
               正在思考
               <span className="flex gap-1">

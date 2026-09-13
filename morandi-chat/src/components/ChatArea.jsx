@@ -21,9 +21,10 @@ const SUGGESTIONS = [
   { icon: "✍️", dot: "bg-blush/80", title: "润色文字", text: "帮我把一段话润色得更专业、更简洁" },
 ];
 
-export default function ChatArea({ messages, entries = [], isStreaming, model, webSearchAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile }) {
+export default function ChatArea({ messages, entries = [], isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile }) {
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
+  const [agentMode, setAgentMode] = useState(false);
   const [attachments, setAttachments] = useState([]); // {uid, file, kind, preview}
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null); // 正在修改的用户消息下标
@@ -50,6 +51,11 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
   useEffect(() => {
     if (!webSearchAvailable) setWebSearch(false);
   }, [webSearchAvailable]);
+
+  // 没有任何可用工具（自定义工具/联网搜索）时，自动收起 Agent 开关
+  useEffect(() => {
+    if (!agentAvailable) setAgentMode(false);
+  }, [agentAvailable]);
 
   // 点击模型下拉外部时关闭
   useEffect(() => {
@@ -100,7 +106,7 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
     if (!content && !attachments.length) return;
     // 发送时若还在聆听，取消识别并阻止 onend 把旧文本写回
     if (speech.listening) speech.cancel();
-    onSend(content, { webSearch, files: attachments.map((a) => a.file), editIndex: editingIndex ?? -1 });
+    onSend(content, { webSearch, agentMode, files: attachments.map((a) => a.file), editIndex: editingIndex ?? -1 });
     attachments.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
     setAttachments([]);
     setInput("");
@@ -532,6 +538,30 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
                   </svg>
                   联网搜索
                   <span className={`w-1.5 h-1.5 rounded-full transition-colors ${webSearch ? "bg-sagedeep" : "bg-muted/40"}`} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setAgentMode((v) => !v)}
+                  disabled={!agentAvailable || isStreaming}
+                  aria-pressed={agentMode}
+                  title={agentAvailable
+                    ? "Agent 模式：模型自主拆解任务、连续调用工具完成多步操作（需启用自定义工具或联网搜索）"
+                    : "需要在工作台启用至少一个自定义工具，或切换到支持联网搜索的服务商"}
+                  className={`flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full border
+                              text-xs font-medium transition-all duration-200 active:scale-[0.97]
+                    ${!agentAvailable
+                      ? "bg-cream/40 border-line/60 text-muted/40 cursor-not-allowed"
+                      : agentMode
+                      ? "bg-sage/70 border-sagedeep/70 text-ink shadow-soft"
+                      : "bg-cream/60 border-line text-muted hover:text-ink hover:border-sagedeep/60"}`}
+                >
+                  {/* 四角星，寓意自主智能体 */}
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+                    <path d="M12 2.5c.35 0 .66.22.78.55l1.35 3.7c.68 1.87 2.1 3.29 3.97 3.97l3.7 1.35c.33.12.55.43.55.78s-.22.66-.55.78l-3.7 1.35c-1.87.68-3.29 2.1-3.97 3.97l-1.35 3.7a.84.84 0 0 1-1.56 0l-1.35-3.7c-.68-1.87-2.1-3.29-3.97-3.97l-3.7-1.35a.84.84 0 0 1 0-1.56l3.7-1.35c1.87-.68 3.29-2.1 3.97-3.97l1.35-3.7c.12-.33.43-.55.78-.55Z" />
+                  </svg>
+                  Agent
+                  <span className={`w-1.5 h-1.5 rounded-full transition-colors ${agentMode ? "bg-sagedeep" : "bg-muted/40"}`} />
                 </button>
               </div>
 

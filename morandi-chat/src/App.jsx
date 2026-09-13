@@ -309,6 +309,25 @@ export default function App() {
     });
   };
 
+  // 工具执行步骤回调（发送 / 继续共用）：start 追加 running 步骤，result 回填状态
+  const toolStepHandler = (convId) => (step) => {
+    updateLastVisible(convId, (node) => {
+      if (!Array.isArray(node.toolSteps)) node.toolSteps = [];
+      if (step.type === "start") {
+        node.toolSteps.push({
+          id: step.callId, name: step.name, source: step.source,
+          args: step.args, status: "running",
+        });
+      } else {
+        const s = node.toolSteps.find((x) => x.id === step.callId);
+        if (s) {
+          s.status = step.error ? "error" : "done";
+          s.result = step.result;
+        }
+      }
+    });
+  };
+
   // 版本切换：dir 为 -1（上一版）/ 1（下一版）；parentId = 用户消息节点的父节点 id
   const switchVersion = (parentId, dir) => {
     if (!activeId) return;
@@ -326,12 +345,15 @@ export default function App() {
   };
 
   const handleSend = async (text, options = {}) => {
-    const { webSearch = false, files = [], retry = false, regenerate = false, editIndex = -1 } = options;
+    const { webSearch = false, agentMode = false, files = [], retry = false, regenerate = false, editIndex = -1 } = options;
     if (!activeConfig.apiKey) {
       setSettingsOpen(true);
       return;
     }
     const useWebSearch = webSearch && activeCaps.webSearch;
+    const enabledTools = toolLib.filter((t) => t.enabled);
+    // Agent 模式必须有可用工具（自定义工具或联网搜索），否则退化为普通对话
+    const useAgent = agentMode && (useWebSearch || enabledTools.length > 0);
 
     // 没有活动对话则先建一个，直接用返回的 id（避免 setState 异步时序问题）
     const convId = activeId || handleNew();
@@ -496,18 +518,32 @@ export default function App() {
         }]
       : [];
 
+    // Agent 模式：引导模型自主拆解任务、连续调用工具、基于结果决定下一步
+    const agentPrompt = useAgent
+      ? [{
+          role: "system",
+          content:
+            "【Agent 模式已开启】你是可以自主使用工具的智能助手。工作方式：1）先拆解任务需要哪些步骤；" +
+            "2）需要工具时主动调用，相互独立的调用可以放在同一轮并行发起；3）根据每步返回结果决定下一步，" +
+            "允许连续多轮调用，直到信息齐备；4）全部完成后用简洁中文给出最终答案，并简要说明用了哪些工具、得到什么关键结果。" +
+            "规则：不要编造工具返回的结果；工具报错时可修正参数重试一次，仍失败就如实告知；简单问题无需调用工具。",
+        }]
+      : [];
+
     await streamChat({
       messages: history,
       systemMessages: [
         ...customSystemMessages(),
         buildTimeMessage(),
         ...webSearchPrompt,
+        ...agentPrompt,
         ...noteMessages,
         ...prepared.systemMessages,
       ],
       config: activeConfig,
       webSearch: useWebSearch,
-      customTools: toolLib.filter((t) => t.enabled),
+      customTools: enabledTools,
+      agentMode: useAgent,
       structured: workbench.structured,
       schemaText: workbench.schemaText,
       genParams: buildGenParams(),
@@ -528,6 +564,8 @@ export default function App() {
           });
         }
       },
+      // Agent 工具执行进度：start 追加一步（running），result 回填结果与状态
+      onToolStep: toolStepHandler(convId),
       onSources: (sources) => {
         updateLastVisible(convId, (node) => {
           const existing = node.sources || [];
@@ -553,6 +591,12 @@ export default function App() {
           node.searching = false;
           node.hint = "";
           node.stopped = stopped;
+          // 兜底：把仍标记为执行中的工具步骤收口（如达到 Agent 轮数上限）
+          if (Array.isArray(node.toolSteps)) {
+            node.toolSteps.forEach((s) => {
+              if (s.status === "running") s.status = "done";
+            });
+          }
           if (usage) node.usage = usage;
         });
         setIsStreaming(false);
@@ -564,6 +608,11 @@ export default function App() {
           node.streaming = false;
           node.searching = false;
           node.hint = "";
+          if (Array.isArray(node.toolSteps)) {
+            node.toolSteps.forEach((s) => {
+              if (s.status === "running") s.status = "error";
+            });
+          }
         });
         setIsStreaming(false);
         abortRef.current = null;
@@ -629,6 +678,7 @@ export default function App() {
             node.hint = "";
           });
         },
+        onToolStep: toolStepHandler(convId),
         onDone: (usage) => {
           const stopped = userStoppedRef.current;
           userStoppedRef.current = false;
@@ -637,6 +687,11 @@ export default function App() {
             node.searching = false;
             node.hint = "";
             node.stopped = stopped;
+            if (Array.isArray(node.toolSteps)) {
+              node.toolSteps.forEach((s) => {
+                if (s.status === "running") s.status = "done";
+              });
+            }
             if (usage) node.usage = usage;
           });
           setIsStreaming(false);
@@ -692,11 +747,17 @@ export default function App() {
           node.content += chunk;
         });
       },
+      onToolStep: toolStepHandler(convId),
       onDone: (usage) => {
         updateLastVisible(convId, (node) => {
           node.streaming = false;
           node.stopped = false;
           node.hint = "";
+          if (Array.isArray(node.toolSteps)) {
+            node.toolSteps.forEach((s) => {
+              if (s.status === "running") s.status = "done";
+            });
+          }
           if (usage) node.usage = usage;
         });
         setIsStreaming(false);
@@ -798,6 +859,7 @@ export default function App() {
         isStreaming={isStreaming}
         model={`${getProvider(activeConfig.provider).name} · ${activeConfig.model || "未设置模型"}`}
         webSearchAvailable={activeCaps.webSearch}
+        agentAvailable={activeCaps.webSearch || toolLib.some((t) => t.enabled)}
         onSend={handleSend}
         onStop={handleStop}
         onContinue={handleContinue}

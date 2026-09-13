@@ -12,6 +12,7 @@ import { compileTools, runLocalTool } from "./tools";
 
 const FORMULA_URI = "moonshot/web-search:latest";
 const MAX_TOOL_ROUNDS = 6; // 防止异常情况下工具调用无限循环
+const AGENT_MAX_ROUNDS = 10; // Agent 模式允许更多轮自主工具调用
 
 let toolsCache = null;
 
@@ -192,14 +193,16 @@ async function runFiber(config, name, args, signal) {
 }
 
 // 用法：
-// await streamChat({ messages, systemMessages, config, webSearch, customTools, onChunk, onStatus, onDone, onError })
+// await streamChat({ messages, systemMessages, config, webSearch, customTools, agentMode, onChunk, onToolStep, onStatus, onDone, onError })
 // customTools: 工作台启用的自定义工具项数组（见 tools.js）
+// agentMode:  Agent 模式（允许连续多轮工具调用，上限 10 轮，并回调每步进度 onToolStep）
 export async function streamChat({
   messages,
   systemMessages = [],
   config,
   webSearch = false,
   customTools = [],
+  agentMode = false,
   structured = false,
   schemaText = "",
   genParams = {},
@@ -207,6 +210,7 @@ export async function streamChat({
   onChunk,
   onStatus,
   onSources,
+  onToolStep,
   onDone,
   onError,
 }) {
@@ -230,6 +234,14 @@ export async function streamChat({
       `[请求] 服务商：${config.provider}，模型：${config.model}，联网搜索：${!!wsTools}，自定义工具：${custom.declarations.length} 个`
     );
     if (toolDecls.length) console.info(`[工具] 工具声明已加载：${toolDecls.length} 个`, toolDecls);
+    if (agentMode) {
+      console.info(
+        toolDecls.length
+          ? `[Agent 模式] 已开启，模型可连续多轮自主调用工具（上限 ${AGENT_MAX_ROUNDS} 轮）`
+          : "[Agent 模式] 已开启，但当前没有可用工具，按普通对话处理"
+      );
+    }
+    const maxRounds = agentMode ? AGENT_MAX_ROUNDS : MAX_TOOL_ROUNDS;
 
     // 结构化输出：请求体带 response_format(json_object)，system 提示词兜底
     // （DashScope/OpenAI 还要求消息里含 "JSON" 关键词，兜底指令天然满足）
@@ -252,7 +264,7 @@ export async function streamChat({
     // 用副本维护完整多轮上下文（含文件 system 消息、tool_calls / role=tool 消息）
     const convo = [...systemMessages, ...structuredPrompt, ...messages];
 
-    for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    for (let round = 0; round <= maxRounds; round++) {
       const { content, toolCalls, usage } = await streamOnce(
         convo, config, toolDecls.length ? toolDecls : null, onChunk, signal, genParams, structured
       );
@@ -270,20 +282,32 @@ export async function streamChat({
       // 逐个执行 tool_call 并以 role=tool 消息回传（id 必须一一对齐）
       for (const tc of toolCalls) {
         const name = tc.function?.name || "";
+        const argsPreview = String(tc.function?.arguments || "").slice(0, 80);
         const localTool = custom.executors.get(name);
         if (localTool) {
           // 自定义工具：前端本地执行（支持 async 函数体）
           console.info(`[自定义工具] 本地执行：${name}`, tc.function.arguments);
           onStatus && onStatus("tool", name);
+          onToolStep && onToolStep({ type: "start", callId: tc.id, name, source: "local", args: argsPreview });
           const out = await runLocalTool(localTool, tc.function.arguments);
+          const isErr = /^\s*\{\s*"error"\s*:/.test(String(out));
           console.info(`[自定义工具] ${name} 返回：`, String(out).slice(0, 300));
+          onToolStep && onToolStep({
+            type: "result", callId: tc.id, name, source: "local",
+            result: String(out).slice(0, 120), error: isErr,
+          });
           convo.push({ role: "tool", tool_call_id: tc.id, content: out });
         } else {
           // 其余视为联网搜索 fiber
           console.info(`[联网搜索] 执行 fiber：${name}`, tc.function.arguments);
           onStatus && onStatus("searching");
+          onToolStep && onToolStep({ type: "start", callId: tc.id, name, source: "web", args: argsPreview });
           const { result, sources } = await runFiber(config, name, tc.function.arguments, signal);
           console.info(`[联网搜索] fiber 返回结果长度：${result.length}，来源数：${sources.length}`);
+          onToolStep && onToolStep({
+            type: "result", callId: tc.id, name, source: "web",
+            result: "已获取联网搜索结果", error: false,
+          });
           if (sources.length && onSources) onSources(sources);
           convo.push({ role: "tool", tool_call_id: tc.id, content: result });
         }
@@ -291,6 +315,8 @@ export async function streamChat({
       // 继续下一轮请求（tools 每轮都要带），模型基于工具结果输出最终回答
     }
 
+    // 超过最大轮数仍未收敛：最后一轮的工具结果之后没有最终回答，按完成处理并提示
+    console.warn(`[Agent 模式] 已达最大工具轮数 ${maxRounds}，停止循环`);
     onDone && onDone();
   } catch (err) {
     // AbortError 不是真正的错误，不触发 onError
