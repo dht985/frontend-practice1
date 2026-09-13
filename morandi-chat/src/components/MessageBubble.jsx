@@ -223,67 +223,133 @@ function CodeBlock({ language, children }) {
 }
 
 // Agent 工具调用步骤：生成中实时显示进度，完成后折叠为「工具调用 · N 步」可展开详情
-function ToolSteps({ steps, streaming }) {
+function StepIcon({ status }) {
+  if (status === "running") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+           strokeLinecap="round" className="w-3 h-3 mt-0.5 text-muted animate-spin flex-shrink-0">
+        <path d="M21 12a9 9 0 1 1-6.2-8.56" />
+      </svg>
+    );
+  }
+  if (status === "awaiting") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+           strokeLinecap="round" strokeLinejoin="round"
+           className="w-3 h-3 mt-0.5 text-peachdeep flex-shrink-0 animate-pulse">
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </svg>
+    );
+  }
+  if (status === "error") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+           strokeLinecap="round" className="w-3 h-3 mt-0.5 text-[#b08a86] flex-shrink-0">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 8v5" />
+        <path d="M12 16h.01" />
+      </svg>
+    );
+  }
+  if (status === "rejected") {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+           strokeLinecap="round" className="w-3 h-3 mt-0.5 text-muted/60 flex-shrink-0">
+        <circle cx="12" cy="12" r="9" />
+        <path d="m15 9-6 6" />
+        <path d="m9 9 6 6" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+         strokeLinecap="round" strokeLinejoin="round"
+         className="w-3 h-3 mt-0.5 text-sagedeep flex-shrink-0">
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
+function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond }) {
   const [open, setOpen] = useState(false);
-  const expanded = streaming || open;
+  const hasAwaiting = steps.some((s) => s.status === "awaiting");
+  const expanded = streaming || open || hasAwaiting;
   return (
     <div className="mb-1.5 not-prose rounded-xl border border-line/60 bg-white/40 overflow-hidden">
       <button
         type="button"
         disabled={streaming}
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted
-                   hover:text-ink disabled:cursor-default transition-colors"
+        className={`w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs
+                   hover:text-ink disabled:cursor-default transition-colors
+                   ${hasAwaiting ? "text-peachdeep" : "text-muted"}`}
       >
-        <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3 text-sagedeep flex-shrink-0">
+        <svg viewBox="0 0 24 24" fill="currentColor"
+             className={`w-3 h-3 flex-shrink-0 ${hasAwaiting ? "text-peachdeep" : "text-sagedeep"}`}>
           <path d="M12 2.5c.35 0 .66.22.78.55l1.35 3.7c.68 1.87 2.1 3.29 3.97 3.97l3.7 1.35c.33.12.55.43.55.78s-.22.66-.55.78l-3.7 1.35c-1.87.68-3.29 2.1-3.97 3.97l-1.35 3.7a.84.84 0 0 1-1.56 0l-1.35-3.7c-.68-1.87-2.1-3.29-3.97-3.97l-3.7-1.35a.84.84 0 0 1 0-1.56l3.7-1.35c1.87-.68 3.29-2.1 3.97-3.97l1.35-3.7c.12-.33.43-.55.78-.55Z" />
         </svg>
         <span>工具调用 · {steps.length} 步</span>
-        {streaming
-          ? <span className="animate-blink">…</span>
-          : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                 strokeLinecap="round" strokeLinejoin="round"
-                 className={`w-3 h-3 ml-auto transition-transform ${open ? "rotate-180" : ""}`}>
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          )}
+        {hasAwaiting && <span className="text-peachdeep/90">· 等待确认</span>}
+        {streaming && !hasAwaiting && <span className="animate-blink">…</span>}
+        {!streaming && (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round"
+               className={`w-3 h-3 ml-auto transition-transform ${open ? "rotate-180" : ""}`}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        )}
       </button>
       {expanded && (
         <div className="px-2.5 pb-2 space-y-1">
           {steps.map((s, i) => (
             <div key={s.id || i} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
-              {s.status === "running" ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
-                     strokeLinecap="round" className="w-3 h-3 mt-0.5 text-muted animate-spin flex-shrink-0">
-                  <path d="M21 12a9 9 0 1 1-6.2-8.56" />
-                </svg>
-              ) : s.status === "error" ? (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                     strokeLinecap="round" className="w-3 h-3 mt-0.5 text-[#b08a86] flex-shrink-0">
-                  <circle cx="12" cy="12" r="9" />
-                  <path d="M12 8v5" />
-                  <path d="M12 16h.01" />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
-                     strokeLinecap="round" strokeLinejoin="round"
-                     className="w-3 h-3 mt-0.5 text-sagedeep flex-shrink-0">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              )}
-              <div className="min-w-0 break-all">
-                <span className="text-ink font-medium">{s.name}</span>
-                {s.source === "web" && <span className="text-muted/70">（联网搜索）</span>}
-                {s.args && s.args !== "{}" && (
-                  <span className="text-muted/70 font-mono ml-1">{s.args}</span>
+              <StepIcon status={s.status} />
+              <div className="min-w-0 flex-1 break-all">
+                <div>
+                  <span className="text-ink font-medium">{s.name}</span>
+                  {s.source === "web" && <span className="text-muted/70">（联网搜索）</span>}
+                  {s.args && s.args !== "{}" && (
+                    <span className="text-muted/70 font-mono ml-1">{s.args}</span>
+                  )}
+                  {s.status === "awaiting" && (
+                    <span className="text-peachdeep/90 ml-1">等待你的确认…</span>
+                  )}
+                  {s.status === "rejected" && (
+                    <span className="text-muted/60 ml-1">已拒绝，未执行</span>
+                  )}
+                </div>
+                {/* 人工确认按钮 */}
+                {s.status === "awaiting" && pendingConfirms[s.id] && (
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <button
+                      type="button"
+                      onClick={() => onRespond?.(s.id, true)}
+                      className="px-2 py-0.5 rounded-md bg-sage/60 border border-sagedeep/50
+                                 text-[10.5px] text-ink hover:bg-sage transition-colors"
+                    >
+                      允许执行
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onRespond?.(s.id, false)}
+                      className="px-2 py-0.5 rounded-md bg-blush/40 border border-[#b08a86]/40
+                                 text-[10.5px] text-ink/70 hover:bg-blush/70 transition-colors"
+                    >
+                      拒绝
+                    </button>
+                  </div>
                 )}
-                {/* 结果预览仅在生成完成后展开时显示，避免流式期间抖动 */}
-                {!streaming && s.status === "done" && s.result && (
+                {/* 结果预览：执行中也实时显示已完成步骤的结果 */}
+                {s.status === "done" && s.result && (
                   <span className="block text-muted/70 font-mono pl-3.5">→ {s.result}</span>
                 )}
-                {!streaming && s.status === "error" && s.result && (
+                {s.status === "error" && s.result && (
                   <span className="block text-[#b08a86] font-mono pl-3.5">→ {s.result}</span>
+                )}
+                {s.status === "rejected" && s.result && (
+                  <span className="block text-muted/50 font-mono pl-3.5">→ {s.result}</span>
                 )}
               </div>
             </div>
@@ -294,7 +360,7 @@ function ToolSteps({ steps, streaming }) {
   );
 }
 
-export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion }) {
+export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const isError = !isUser && String(message.content).startsWith("⚠️");
@@ -379,7 +445,12 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
           )}
 
           {message.toolSteps?.length > 0 ? (
-            <ToolSteps steps={message.toolSteps} streaming={message.streaming} />
+            <ToolSteps
+              steps={message.toolSteps}
+              streaming={message.streaming}
+              pendingConfirms={pendingConfirms}
+              onRespond={onRespondToolConfirm}
+            />
           ) : message.searching ? (
             <div className="flex items-center gap-1.5 text-xs text-muted mb-1.5 not-prose">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"

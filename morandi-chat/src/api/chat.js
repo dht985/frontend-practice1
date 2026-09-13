@@ -211,6 +211,7 @@ export async function streamChat({
   onStatus,
   onSources,
   onToolStep,
+  onToolConfirm,
   onDone,
   onError,
 }) {
@@ -288,7 +289,47 @@ export async function streamChat({
           // 自定义工具：前端本地执行（支持 async 函数体）
           console.info(`[自定义工具] 本地执行：${name}`, tc.function.arguments);
           onStatus && onStatus("tool", name);
-          onToolStep && onToolStep({ type: "start", callId: tc.id, name, source: "local", args: argsPreview });
+          onToolStep && onToolStep({
+            type: "start", callId: tc.id, name, source: "local", args: argsPreview,
+            needsConfirm: !!localTool.confirm,
+          });
+
+          // 危险工具：执行前暂停等待人工确认；等待期间用户点了停止则按 AbortError 中止
+          if (localTool.confirm) {
+            let approved = false;
+            if (onToolConfirm) {
+              const abortPromise = new Promise((_, reject) => {
+                if (signal?.aborted) {
+                  reject(new DOMException("Aborted", "AbortError"));
+                } else {
+                  signal.addEventListener(
+                    "abort",
+                    () => reject(new DOMException("Aborted", "AbortError")),
+                    { once: true }
+                  );
+                }
+              });
+              approved = await Promise.race([
+                Promise.resolve(onToolConfirm(tc.id, name, tc.function.arguments)),
+                abortPromise,
+              ]);
+            }
+            if (!approved) {
+              console.info(`[自定义工具] 用户拒绝调用：${name}`);
+              onToolStep && onToolStep({
+                type: "result", callId: tc.id, name, source: "local",
+                result: "用户拒绝了本次工具调用", rejected: true,
+              });
+              convo.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: "用户拒绝了该工具调用，请不要再次调用它，改为直接说明情况或换个方案。" }),
+              });
+              continue;
+            }
+            onToolStep && onToolStep({ type: "approved", callId: tc.id, name });
+          }
+
           const out = await runLocalTool(localTool, tc.function.arguments);
           const isErr = /^\s*\{\s*"error"\s*:/.test(String(out));
           console.info(`[自定义工具] ${name} 返回：`, String(out).slice(0, 300));

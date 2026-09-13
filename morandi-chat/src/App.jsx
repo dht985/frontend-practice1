@@ -152,6 +152,10 @@ export default function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const abortRef = useRef(null); // 当前请求的 AbortController
   const userStoppedRef = useRef(false); // 标记是否用户手动停止（避免 onDone 覆盖 stopped 标记）
+  // 危险工具人工确认：callId → resolve 函数（不放 state，避免 Promise 被反复序列化）
+  const confirmResolversRef = useRef(new Map());
+  // 仅把展示需要的信息放 state（callId → {name, args}），触发气泡渲染确认按钮
+  const [pendingConfirms, setPendingConfirms] = useState({});
 
   // 对话持久化：流式期间每个 token 都全量序列化+写盘会越来越卡，改为 400ms 防抖；
   // 页面关闭/切后台时立即落盘，避免丢尾部更新
@@ -246,6 +250,7 @@ export default function App() {
       parameters: source?.parameters || '{"type":"object","properties":{}}',
       code: source?.code || 'return "hello";',
       enabled: true,
+      confirm: source?.confirm || false, // 调用前是否需要人工确认
       builtin: false,
     };
     setToolLib((prev) => [...prev, item]);
@@ -316,15 +321,41 @@ export default function App() {
       if (step.type === "start") {
         node.toolSteps.push({
           id: step.callId, name: step.name, source: step.source,
-          args: step.args, status: "running",
+          args: step.args,
+          status: step.needsConfirm ? "awaiting" : "running",
         });
+      } else if (step.type === "approved") {
+        const s = node.toolSteps.find((x) => x.id === step.callId);
+        if (s) s.status = "running";
       } else {
         const s = node.toolSteps.find((x) => x.id === step.callId);
         if (s) {
-          s.status = step.error ? "error" : "done";
+          s.status = step.rejected ? "rejected" : step.error ? "error" : "done";
           s.result = step.result;
         }
       }
+    });
+  };
+
+  // 危险工具确认：chat.js 在调用前 await 这个 Promise，直到用户点允许/拒绝
+  const toolConfirmHandler = (callId, name, argsJson) =>
+    new Promise((resolve) => {
+      confirmResolversRef.current.set(callId, resolve);
+      setPendingConfirms((prev) => ({ ...prev, [callId]: { name, args: String(argsJson || "").slice(0, 120) } }));
+    });
+
+  // 用户响应确认（ok=true 允许执行）
+  const respondToolConfirm = (callId, ok) => {
+    const resolve = confirmResolversRef.current.get(callId);
+    if (resolve) {
+      resolve(ok);
+      confirmResolversRef.current.delete(callId);
+    }
+    setPendingConfirms((prev) => {
+      if (!prev[callId]) return prev;
+      const next = { ...prev };
+      delete next[callId];
+      return next;
     });
   };
 
@@ -566,6 +597,7 @@ export default function App() {
       },
       // Agent 工具执行进度：start 追加一步（running），result 回填结果与状态
       onToolStep: toolStepHandler(convId),
+      onToolConfirm: toolConfirmHandler,
       onSources: (sources) => {
         updateLastVisible(convId, (node) => {
           const existing = node.sources || [];
@@ -595,6 +627,7 @@ export default function App() {
           if (Array.isArray(node.toolSteps)) {
             node.toolSteps.forEach((s) => {
               if (s.status === "running") s.status = "done";
+              if (s.status === "awaiting") s.status = "rejected"; // 等待确认时被停止
             });
           }
           if (usage) node.usage = usage;
@@ -611,6 +644,7 @@ export default function App() {
           if (Array.isArray(node.toolSteps)) {
             node.toolSteps.forEach((s) => {
               if (s.status === "running") s.status = "error";
+              if (s.status === "awaiting") s.status = "rejected";
             });
           }
         });
@@ -623,6 +657,10 @@ export default function App() {
   // 停止生成
   const handleStop = () => {
     userStoppedRef.current = true; // onDone 会读这个标记设置 stopped
+    // 等待人工确认中的工具：一律按拒绝处理，避免 Promise 悬挂
+    confirmResolversRef.current.forEach((resolve) => resolve(false));
+    confirmResolversRef.current.clear();
+    setPendingConfirms({});
     abortRef.current?.abort();
     abortRef.current = null;
     setIsStreaming(false);
@@ -679,6 +717,7 @@ export default function App() {
           });
         },
         onToolStep: toolStepHandler(convId),
+        onToolConfirm: toolConfirmHandler,
         onDone: (usage) => {
           const stopped = userStoppedRef.current;
           userStoppedRef.current = false;
@@ -690,6 +729,7 @@ export default function App() {
             if (Array.isArray(node.toolSteps)) {
               node.toolSteps.forEach((s) => {
                 if (s.status === "running") s.status = "done";
+                if (s.status === "awaiting") s.status = "rejected";
               });
             }
             if (usage) node.usage = usage;
@@ -703,6 +743,12 @@ export default function App() {
             node.streaming = false;
             node.stopped = false;
             node.hint = "";
+            if (Array.isArray(node.toolSteps)) {
+              node.toolSteps.forEach((s) => {
+                if (s.status === "running") s.status = "error";
+                if (s.status === "awaiting") s.status = "rejected";
+              });
+            }
           });
           setIsStreaming(false);
           abortRef.current = null;
@@ -748,6 +794,7 @@ export default function App() {
         });
       },
       onToolStep: toolStepHandler(convId),
+      onToolConfirm: toolConfirmHandler,
       onDone: (usage) => {
         updateLastVisible(convId, (node) => {
           node.streaming = false;
@@ -756,6 +803,7 @@ export default function App() {
           if (Array.isArray(node.toolSteps)) {
             node.toolSteps.forEach((s) => {
               if (s.status === "running") s.status = "done";
+              if (s.status === "awaiting") s.status = "rejected";
             });
           }
           if (usage) node.usage = usage;
@@ -769,6 +817,12 @@ export default function App() {
           node.streaming = false;
           node.stopped = false;
           node.hint = "";
+          if (Array.isArray(node.toolSteps)) {
+            node.toolSteps.forEach((s) => {
+              if (s.status === "running") s.status = "error";
+              if (s.status === "awaiting") s.status = "rejected";
+            });
+          }
         });
         setIsStreaming(false);
         abortRef.current = null;
@@ -877,6 +931,8 @@ export default function App() {
         }))}
         activeProfileId={config.activeId}
         onSwitchProfile={activateProfile}
+        pendingConfirms={pendingConfirms}
+        onRespondToolConfirm={respondToolConfirm}
       />
       <Settings
         open={settingsOpen}

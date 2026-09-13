@@ -169,6 +169,15 @@ function ToolEditor({ tool, onUpdate }) {
         className="w-full px-2.5 py-2 border border-line rounded-lg outline-none text-[11px] font-mono
                    leading-relaxed text-ink bg-white focus:border-peach resize-y"
       />
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] text-ink font-medium leading-tight">调用前需人工确认</p>
+          <p className="text-[10px] text-muted/80 leading-snug mt-0.5">
+            开启后模型每次调用该工具都会暂停，等你点「允许」才执行（适合写文件、删除等危险操作）
+          </p>
+        </div>
+        <Toggle checked={!!tool.confirm} onChange={(v) => onUpdate({ confirm: v })} />
+      </div>
       <p className="text-[10px] text-muted/80 leading-snug">
         函数体里通过 <code>args.参数名</code> 读取模型传入的参数，<code>return</code> 的值会转成 JSON 回传给模型。
       </p>
@@ -461,6 +470,10 @@ export default function WorkbenchPanel({
                       <span className="ml-1.5 text-[9.5px] px-1 py-0.5 rounded bg-lilacsoft/70 text-ink/60 align-middle">
                         内置
                       </span>
+                    )}
+                    {t.confirm && (
+                      <span title="调用前需人工确认"
+                            className="ml-1 text-[11px] text-peachdeep align-middle leading-none">⚠</span>
                     )}
                     <p className="text-[10.5px] text-muted truncate">{t.description || "（无描述）"}</p>
                   </button>
