@@ -281,10 +281,75 @@ function StepIcon({ status }) {
   );
 }
 
-function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryTool }) {
+// 把工具返回的 JSON 字符串压成简短预览，供步骤行显示（全文仍可展开）
+// 优先用完整结果解析，避免步骤里 120 字截断导致 JSON 不合法而回退成原串
+function previewOf(result) {
+  try {
+    const obj = JSON.parse(result);
+    if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+      const parts = [];
+      if (obj.title) parts.push(String(obj.title).slice(0, 60));
+      if (typeof obj.content === "string" && obj.content) parts.push(obj.content.slice(0, 80).replace(/\s+/g, " "));
+      if (Array.isArray(obj.todos)) parts.push(`${obj.todos.length} 条待办`);
+      if (obj.url) parts.push(String(obj.url).slice(0, 50));
+      if (parts.length) return parts.join(" · ");
+    }
+  } catch {
+    // 非 JSON 字符串直接当预览
+  }
+  return String(result);
+}
+
+// 工具结果展示：默认只显示一行预览；有全文时可点击「全文/收起」展开查看
+// previewText 是步骤里存的 120 字截断文本（可能是被截断的 JSON）；
+// full 是内存里的完整结果，优先用它生成结构化预览（title / content / todos 等）
+function ResultDisplay({ previewText, full, color, expanded, onToggle }) {
+  const source = typeof full === "string" ? full : previewText || "";
+  let label = `→ ${previewText}`;
+  try {
+    const pretty = previewOf(source);
+    const candidate = `→ ${pretty}`;
+    if (candidate.length <= 160) label = candidate;
+  } catch {
+    // 预览生成失败时回退到步骤里的截断文本
+  }
+  const hasFull = typeof full === "string" && full.length > (previewText || "").length;
+  const showFull = expanded && hasFull;
+  const fullText = hasFull ? String(full) : "";
+  return (
+    <div className="pl-3.5">
+      <div className={`font-mono ${color}`}>
+        {showFull ? (
+          <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed max-h-[60vh] overflow-y-auto bg-cream/50 rounded-md p-2 border border-line/50 mt-0.5">{fullText}</pre>
+        ) : (
+          <span className="block break-all">{label}</span>
+        )}
+      </div>
+      {hasFull && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="mt-0.5 text-[10.5px] text-sagedeep hover:text-ink transition-colors inline-flex items-center gap-0.5"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round"
+               className={`w-2.5 h-2.5 transition-transform ${expanded ? "rotate-180" : ""}`}>
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          {expanded ? "收起全文" : `查看全文（${full.length} 字）`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryTool, fullResultsMap }) {
   const [open, setOpen] = useState(false);
+  const [expandedIds, setExpandedIds] = useState({}); // 步骤 id → 是否已展开全文
   const hasAwaiting = steps.some((s) => s.status === "awaiting");
-  const expanded = streaming || open || hasAwaiting;
+  const blockExpanded = streaming || open || hasAwaiting;
+  const isStepExpanded = (id) => expandedIds[id];
+  const toggleStep = (id) => setExpandedIds((m) => ({ ...m, [id]: !m[id] }));
   return (
     <div className="mb-1.5 not-prose rounded-xl border border-line/60 bg-white/40 overflow-hidden">
       <button
@@ -310,7 +375,7 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
           </svg>
         )}
       </button>
-      {expanded && (
+      {blockExpanded && (
         <div className="px-2.5 pb-2 space-y-1">
           {steps.map((s, i) => {
             // 状态文案：执行中 / 自动重试中 / 调用成功 / 最终失败
@@ -370,12 +435,24 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
                     </button>
                   </div>
                 )}
-                {/* 结果 / 失败原因 */}
+                {/* 结果 / 失败原因（带全文展开） */}
                 {s.status === "done" && s.result && (
-                  <span className="block text-muted/70 font-mono pl-3.5">→ {s.result}</span>
+                  <ResultDisplay
+                    previewText={s.result}
+                    full={fullResultsMap?.get(s.id)}
+                    color="text-muted/70"
+                    expanded={isStepExpanded(s.id)}
+                    onToggle={() => toggleStep(s.id)}
+                  />
                 )}
                 {s.status === "error" && s.result && (
-                  <span className="block text-[#b08a86] font-mono pl-3.5">→ {s.result}</span>
+                  <ResultDisplay
+                    previewText={s.result}
+                    full={fullResultsMap?.get(s.id)}
+                    color="text-[#b08a86]"
+                    expanded={isStepExpanded(s.id)}
+                    onToggle={() => toggleStep(s.id)}
+                  />
                 )}
                 {s.status === "rejected" && s.result && (
                   <span className="block text-muted/50 font-mono pl-3.5">→ {s.result}</span>
@@ -407,7 +484,7 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
   );
 }
 
-export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm, onRetryTool }) {
+export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const isError = !isUser && String(message.content).startsWith("⚠️");
@@ -498,6 +575,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
               pendingConfirms={pendingConfirms}
               onRespond={onRespondToolConfirm}
               onRetryTool={onRetryTool}
+              fullResultsMap={fullResultsMap}
             />
           ) : message.searching ? (
             <div className="flex items-center gap-1.5 text-xs text-muted mb-1.5 not-prose">

@@ -21,7 +21,7 @@ const SUGGESTIONS = [
   { icon: "✍️", dot: "bg-blush/80", title: "润色文字", text: "帮我把一段话润色得更专业、更简洁" },
 ];
 
-export default function ChatArea({ messages, entries = [], isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool }) {
+export default function ChatArea({ messages, entries = [], isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [agentMode, setAgentMode] = useState(false);
@@ -332,6 +332,7 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
                 pendingConfirms={pendingConfirms}
                 onRespondToolConfirm={onRespondToolConfirm}
                 onRetryTool={onRetryTool}
+                fullResultsMap={fullResultsMap}
               />
             ))}
             <div ref={endRef} className="h-2" />

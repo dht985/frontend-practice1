@@ -420,7 +420,7 @@ export async function streamChat({
           const isErr = res.isError;
           onToolStep && onToolStep({
             type: "result", callId: p.tc.id, name: p.name, source: "local",
-            result: res.content.slice(0, 120), error: isErr,
+            result: res.content.slice(0, 120), full: res.content, error: isErr,
             attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY, retryable: res.retryable,
           });
           // 错误结果连同原因回传给模型，让模型有机会修正参数或换方案
@@ -441,7 +441,8 @@ export async function streamChat({
           console.warn(`[联网搜索] fiber 失败：${p.name}`, reason);
           onToolStep && onToolStep({
             type: "result", callId: p.tc.id, name: p.name, source: "web",
-            result: `联网搜索失败：${reason}`.slice(0, 120), error: true,
+            result: `联网搜索失败：${reason}`.slice(0, 120),
+            full: `联网搜索失败：${reason}\n\n${res.content}`, error: true,
             attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY, retryable: res.retryable,
           });
           const hint = res.retryable
@@ -458,7 +459,7 @@ export async function streamChat({
           console.info(`[联网搜索] fiber 返回结果长度：${res.content.length}，来源数：${res.sources?.length || 0}`);
           onToolStep && onToolStep({
             type: "result", callId: p.tc.id, name: p.name, source: "web",
-            result: "已获取联网搜索结果", error: false,
+            result: "已获取联网搜索结果", full: res.content, error: false,
             attempt: res.attempt, maxRetries: TOOL_AUTO_RETRY,
           });
           if (res.sources?.length && onSources) onSources(res.sources);

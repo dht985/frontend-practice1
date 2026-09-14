@@ -126,6 +126,25 @@ export function extractReadable(html) {
   return { title, text };
 }
 
+// 在长度上限处按边界截断，避免把句子/单词切成半截：
+// 优先在 [75%max, max] 区间找最后一个换行（段落），其次找句末标点，都没有才硬切
+export function truncateAtBoundary(text, max) {
+  if (text.length <= max) return { text, truncated: false };
+  const head = text.slice(0, max);
+  const minCut = Math.floor(max * 0.75);
+  let cut = head.lastIndexOf("\n");
+  if (cut < minCut) {
+    // 中英文句末标点（英文要求 ". " 两个字符，减少误伤小数点/缩写）
+    const marks = ["。", "！", "？", "!\u0020", "?\u0020", ".\u0020", "；", "; "];
+    for (const mk of marks) {
+      const at = head.lastIndexOf(mk);
+      if (at + mk.length > cut) cut = at + mk.length; // 切点包含标点本身
+    }
+  }
+  if (cut < minCut) cut = max;
+  return { text: head.slice(0, cut).trimEnd(), truncated: true };
+}
+
 // fetch_url 入口：校验 URL → 抓取 → 提取 → 截断，返回 { title, url, content, truncated }
 export async function fetchUrl(rawUrl, signal) {
   const url = String(rawUrl || "").trim();
@@ -145,16 +164,12 @@ export async function fetchUrl(rawUrl, signal) {
 
   const env = await fetchPageEnvelope(url, signal);
   const { title, text } = extractReadable(env.html);
-  let content = text;
-  let truncated = !!env.truncated;
-  if (content.length > MAX_CONTENT_CHARS) {
-    content = content.slice(0, MAX_CONTENT_CHARS);
-    truncated = true;
-  }
+  // 正文超限：优先在段落/句子边界截断；代理层按字节截断也算 truncated
+  const cut = truncateAtBoundary(text, MAX_CONTENT_CHARS);
   return {
     title,
     url: env.finalUrl || url,
-    content,
-    truncated,
+    content: cut.text,
+    truncated: cut.truncated || !!env.truncated,
   };
 }

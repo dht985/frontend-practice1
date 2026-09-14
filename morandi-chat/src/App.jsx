@@ -157,6 +157,9 @@ export default function App() {
   const userStoppedRef = useRef(false); // 标记是否用户手动停止（避免 onDone 覆盖 stopped 标记）
   // 危险工具人工确认：callId → resolve 函数（不放 state，避免 Promise 被反复序列化）
   const confirmResolversRef = useRef(new Map());
+  // 工具结果全文：callId → 完整结果字符串。只放内存不进 conversations，
+  // 避免 20k 抓取正文撑大 localStorage；刷新后不可展开（回退显示步骤内 120 字预览）
+  const fullResultsRef = useRef(new Map());
   // 仅把展示需要的信息放 state（callId → {name, args}），触发气泡渲染确认按钮
   const [pendingConfirms, setPendingConfirms] = useState({});
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
@@ -364,6 +367,9 @@ export default function App() {
           s.retry = step.attempt ? step.attempt - 1 : s.retry; // 已完成的重试次数
           s.maxRetry = step.maxRetries || s.maxRetry;
           s.canRetry = !!step.error; // 失败步骤允许手动重新尝试
+          if (typeof step.full === "string" && step.full.length > s.result.length) {
+            fullResultsRef.current.set(step.callId, step.full);
+          }
         }
       }
     });
@@ -410,6 +416,11 @@ export default function App() {
           s.canRetry = isError;
         }
       });
+      if (String(resultStr).length > 120) {
+        fullResultsRef.current.set(callId, String(resultStr));
+      } else {
+        fullResultsRef.current.delete(callId);
+      }
       if (sources.length) {
         updateLastVisible(conv.id, (n) => {
           const map = new Map((n.sources || []).map((x) => [x.url, x]));
@@ -1029,6 +1040,7 @@ export default function App() {
         pendingConfirms={pendingConfirms}
         onRespondToolConfirm={respondToolConfirm}
         onRetryTool={retryToolStep}
+        fullResultsMap={fullResultsRef.current}
       />
       <Settings
         open={settingsOpen}
