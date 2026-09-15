@@ -272,6 +272,15 @@ function StepIcon({ status }) {
       </svg>
     );
   }
+  if (status === "stopped") {
+    // 用户主动停止：中性灰色实心方块（停止语义），区别于成功绿勾、拒绝灰 X、失败红感叹号
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor"
+           className="w-3 h-3 mt-0.5 text-muted/55 flex-shrink-0">
+        <rect x="6" y="6" width="12" height="12" rx="2.5" />
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
          strokeLinecap="round" strokeLinejoin="round"
@@ -378,13 +387,14 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
       {blockExpanded && (
         <div className="px-2.5 pb-2 space-y-1">
           {steps.map((s, i) => {
-            // 状态文案：执行中 / 自动重试中 / 调用成功 / 最终失败
+            // 状态文案：执行中 / 自动重试中 / 调用成功 / 已停止 / 最终失败
             let statusText = null;
             if (s.status === "running") statusText = "执行中…";
             else if (s.status === "retrying")
               statusText = `自动重试中（重试 ${s.retry}/${s.maxRetry || s.retry}）`;
             else if (s.status === "awaiting") statusText = "等待你的确认…";
             else if (s.status === "rejected") statusText = "已拒绝，未执行";
+            else if (s.status === "stopped") statusText = "已停止";
             else if (s.status === "done") statusText = "调用成功";
             else if (s.status === "error")
               statusText = s.retry > 0 ? `重试 ${s.retry} 次后仍失败` : "最终失败";
@@ -407,7 +417,7 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
                           ? "text-peachdeep/90"
                           : s.status === "done"
                           ? "text-sagedeep"
-                          : "text-muted/70"
+                          : "text-muted/70" // rejected / stopped：中性灰，不复用成功绿
                       }`}
                     >
                       {statusText}

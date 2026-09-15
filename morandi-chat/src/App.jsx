@@ -15,6 +15,12 @@ import {
   saveFullResult,
   deleteFullResult,
 } from "./api/fullResultsStore";
+import {
+  finalizeToolSteps,
+  failToolSteps,
+  consumeStopFlag,
+  collectToolStepIds,
+} from "./api/toolSteps";
 
 const STORAGE_KEY = "morandi-chat-conversations";
 const CONFIG_KEY = "morandi-chat-config";
@@ -249,6 +255,15 @@ export default function App() {
   };
 
   const handleDelete = (id) => {
+    // 联动清理该对话所有分支（不只当前可见路径）上工具结果全文，
+    // 避免删除对话后 20k 正文长期残留在内存 Map 与 IndexedDB 中
+    const conv = conversations.find((c) => c.id === id);
+    if (conv?.tree) {
+      for (const callId of collectToolStepIds(conv.tree)) {
+        fullResultsRef.current.delete(callId);
+        deleteFullResult(callId);
+      }
+    }
     setConversations((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) setActiveId(null);
   };
@@ -618,6 +633,8 @@ export default function App() {
     // 为本次请求创建 AbortController
     const controller = new AbortController();
     abortRef.current = controller;
+    // 防御性重置停止标记：上一次请求若走了异常路径没消费掉，不能污染本次请求
+    userStoppedRef.current = false;
 
     const setHint = (hint) =>
       updateLastVisible(convId, (node) => {
@@ -742,8 +759,8 @@ export default function App() {
         });
       },
       onDone: (usage) => {
-        const stopped = userStoppedRef.current;
-        userStoppedRef.current = false;
+        // 消费并重置停止标记（用户中止时 chat.js 走 onDone 而非 onError）
+        const stopped = consumeStopFlag(userStoppedRef);
         updateLastVisible(convId, (node) => {
           // 联网搜索开启但 fiber 未返回来源时，从最终回答的 Markdown 链接中提取
           if (useWebSearch && !(node.sources?.length) && node.content) {
@@ -759,30 +776,23 @@ export default function App() {
           node.searching = false;
           node.hint = "";
           node.stopped = stopped;
-          // 兜底：把仍标记为执行中的工具步骤收口（如达到 Agent 轮数上限）
-          if (Array.isArray(node.toolSteps)) {
-            node.toolSteps.forEach((s) => {
-              if (s.status === "running") s.status = "done";
-              if (s.status === "awaiting") s.status = "rejected"; // 等待确认时被停止
-            });
-          }
+          // 收口未决工具步骤：停止→stopped，正常完成→done，等待确认→rejected
+          finalizeToolSteps(node.toolSteps, stopped);
           if (usage) node.usage = usage;
         });
         setIsStreaming(false);
         abortRef.current = null;
       },
       onError: (err) => {
+        // 与 onDone 互斥；同样消费标记，防止任何异常路径下残留污染下一次请求
+        consumeStopFlag(userStoppedRef);
         updateLastVisible(convId, (node) => {
           node.content = `⚠️ ${err.message}`;
           node.streaming = false;
           node.searching = false;
           node.hint = "";
-          if (Array.isArray(node.toolSteps)) {
-            node.toolSteps.forEach((s) => {
-              if (s.status === "running") s.status = "error";
-              if (s.status === "awaiting") s.status = "rejected";
-            });
-          }
+          node.stopped = false;
+          failToolSteps(node.toolSteps);
         });
         setIsStreaming(false);
         abortRef.current = null;
@@ -824,6 +834,8 @@ export default function App() {
 
       const controller = new AbortController();
       abortRef.current = controller;
+      // 防御性重置停止标记，避免污染本次继续生成
+      userStoppedRef.current = false;
 
       // 历史 = 已有对话（末尾那条空 assistant 消息过滤掉）
       const history = chain
@@ -856,36 +868,27 @@ export default function App() {
         onToolStep: toolStepHandler(convId),
         onToolConfirm: toolConfirmHandler,
         onDone: (usage) => {
-          const stopped = userStoppedRef.current;
-          userStoppedRef.current = false;
+          // 消费并重置停止标记（与普通发送路径一致，避免残留污染下一次请求）
+          const stopped = consumeStopFlag(userStoppedRef);
           updateLastVisible(convId, (node) => {
             node.streaming = false;
             node.searching = false;
             node.hint = "";
             node.stopped = stopped;
-            if (Array.isArray(node.toolSteps)) {
-              node.toolSteps.forEach((s) => {
-                if (s.status === "running") s.status = "done";
-                if (s.status === "awaiting") s.status = "rejected";
-              });
-            }
+            finalizeToolSteps(node.toolSteps, stopped);
             if (usage) node.usage = usage;
           });
           setIsStreaming(false);
           abortRef.current = null;
         },
         onError: (err) => {
+          consumeStopFlag(userStoppedRef);
           updateLastVisible(convId, (node) => {
             node.content = `⚠️ ${err.message}`;
             node.streaming = false;
             node.stopped = false;
             node.hint = "";
-            if (Array.isArray(node.toolSteps)) {
-              node.toolSteps.forEach((s) => {
-                if (s.status === "running") s.status = "error";
-                if (s.status === "awaiting") s.status = "rejected";
-              });
-            }
+            failToolSteps(node.toolSteps);
           });
           setIsStreaming(false);
           abortRef.current = null;
@@ -905,6 +908,8 @@ export default function App() {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    // 防御性重置停止标记，避免污染本次继续生成
+    userStoppedRef.current = false;
 
     // 历史 = 已有对话（含已生成的不完整 AI 回答），让模型接着续写
     const history = chain
@@ -934,33 +939,27 @@ export default function App() {
       onToolStep: toolStepHandler(convId),
       onToolConfirm: toolConfirmHandler,
       onDone: (usage) => {
+        // 修复：继续生成后用户点了停止时，必须保留 stopped=true（“继续生成”入口仍在），
+        // 并消费重置标记，否则下一次普通发送会被残留标记误标为已停止
+        const stopped = consumeStopFlag(userStoppedRef);
         updateLastVisible(convId, (node) => {
           node.streaming = false;
-          node.stopped = false;
+          node.stopped = stopped;
           node.hint = "";
-          if (Array.isArray(node.toolSteps)) {
-            node.toolSteps.forEach((s) => {
-              if (s.status === "running") s.status = "done";
-              if (s.status === "awaiting") s.status = "rejected";
-            });
-          }
+          finalizeToolSteps(node.toolSteps, stopped);
           if (usage) node.usage = usage;
         });
         setIsStreaming(false);
         abortRef.current = null;
       },
       onError: (err) => {
+        consumeStopFlag(userStoppedRef);
         updateLastVisible(convId, (node) => {
           node.content += `\n\n⚠️ ${err.message}`;
           node.streaming = false;
           node.stopped = false;
           node.hint = "";
-          if (Array.isArray(node.toolSteps)) {
-            node.toolSteps.forEach((s) => {
-              if (s.status === "running") s.status = "error";
-              if (s.status === "awaiting") s.status = "rejected";
-            });
-          }
+          failToolSteps(node.toolSteps);
         });
         setIsStreaming(false);
         abortRef.current = null;
