@@ -2,6 +2,8 @@
 // 开发环境传输层走 Vite 插件端点 /__fetch__（见 fetch-proxy.js）规避浏览器跨域；
 // 迁移正式后端时，只需把 VITE_FETCH_ENDPOINT 指向提供同样 JSON 信封的后端地址。
 
+import { Readability } from "@mozilla/readability";
+
 const FETCH_ENDPOINT = import.meta.env.VITE_FETCH_ENDPOINT || "/__fetch__";
 const MAX_CONTENT_CHARS = 20_000; // 回传给模型的正文上限（约 6~8k tokens），超出截断
 const HTTP_URL_RE = /^https?:\/\//i;
@@ -91,9 +93,10 @@ function elementToText(el) {
 }
 
 // 从 HTML 提取标题与正文：优先 article / main / [role=main]，内容过短再退回 body（同时剔除导航页脚等）
+// 以上均不够 200 字时，用 Mozilla Readability 算法兜底（Firefox Reader View 同款）
 export function extractReadable(html) {
   const doc = new DOMParser().parseFromString(html || "", "text/html");
-  const title = String(
+  let title = String(
     doc.querySelector('meta[property="og:title"]')?.content ||
       doc.querySelector("title")?.textContent ||
       doc.querySelector("h1")?.textContent ||
@@ -122,6 +125,26 @@ export function extractReadable(html) {
     body.querySelectorAll("nav,header,footer,aside,[aria-hidden='true']").forEach((n) => n.remove());
     text = elementToText(body);
   }
+
+  // Readability 兜底：当前提取不足 200 字时，用 Readability 算法重新提取
+  if (text.length < 200) {
+    try {
+      const reader = new Readability(doc.cloneNode(true));
+      const article = reader.parse();
+      if (article?.textContent?.trim()) {
+        const raText = article.textContent.trim();
+        if (raText.length > text.length) {
+          text = raText;
+          if (!title && article.title) {
+            title = article.title.slice(0, 300);
+          }
+        }
+      }
+    } catch {
+      // Readability 失败时保持原有结果
+    }
+  }
+
   if (!text) text = "（未提取到有效正文，该页面可能依赖 JavaScript 动态渲染）";
   return { title, text };
 }
