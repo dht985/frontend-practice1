@@ -10,6 +10,11 @@ import { isNativeTool, runNativeTool, loadNativeToolSettings, saveNativeToolSett
 import { todoList, onTodosChange } from "./api/todos";
 import TodoPanel from "./components/TodoPanel";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
+import {
+  loadAllFullResults,
+  saveFullResult,
+  deleteFullResult,
+} from "./api/fullResultsStore";
 
 const STORAGE_KEY = "morandi-chat-conversations";
 const CONFIG_KEY = "morandi-chat-config";
@@ -159,8 +164,10 @@ export default function App() {
   // 危险工具人工确认：callId → resolve 函数（不放 state，避免 Promise 被反复序列化）
   const confirmResolversRef = useRef(new Map());
   // 工具结果全文：callId → 完整结果字符串。只放内存不进 conversations，
-  // 避免 20k 抓取正文撑大 localStorage；刷新后不可展开（回退显示步骤内 120 字预览）
+  // 避免 20k 抓取正文撑大 localStorage；但单独持久化到 IndexedDB，刷新后异步加载回来。
+  // fullResultsVersion 仅用于 mount 加载完后触发一次 re-render（React 不会因 ref 变化重渲染）
   const fullResultsRef = useRef(new Map());
+  const [fullResultsVersion, setFullResultsVersion] = useState(0);
   // 仅把展示需要的信息放 state（callId → {name, args}），触发气泡渲染确认按钮
   const [pendingConfirms, setPendingConfirms] = useState({});
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
@@ -171,6 +178,23 @@ export default function App() {
     const refresh = () => setTodoBadge(todoList().todos.filter((t) => !t.completed).length);
     refresh();
     return onTodosChange(refresh);
+  }, []);
+
+  // mount 时一次性从 IndexedDB 加载全部工具结果全文到内存 Map
+  // fullResultsRef.current 是引用类型，直接 set 不会触发渲染，故额外 bump version
+  // 加载失败（隐私模式/IndexedDB 不可用）时 store 内部已静默降级为空 Map，这里无需 try/catch
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const map = await loadAllFullResults();
+      if (cancelled) return;
+      // 合并而非覆盖：mount 期间若已通过 toolStepHandler 写入新条目，避免被覆盖
+      for (const [k, v] of map) {
+        if (!fullResultsRef.current.has(k)) fullResultsRef.current.set(k, v);
+      }
+      setFullResultsVersion((v) => v + 1);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   // 对话持久化：流式期间每个 token 都全量序列化+写盘会越来越卡，改为 400ms 防抖；
@@ -370,6 +394,8 @@ export default function App() {
           s.canRetry = !!step.error; // 失败步骤允许手动重新尝试
           if (typeof step.full === "string" && step.full.length > s.result.length) {
             fullResultsRef.current.set(step.callId, step.full);
+            // 同步持久化到 IndexedDB，刷新后仍可展开全文
+            saveFullResult(step.callId, step.full);
           }
         }
       }
@@ -419,8 +445,12 @@ export default function App() {
       });
       if (String(resultStr).length > 120) {
         fullResultsRef.current.set(callId, String(resultStr));
+        // 同步持久化，刷新后仍可展开
+        saveFullResult(callId, String(resultStr));
       } else {
         fullResultsRef.current.delete(callId);
+        // 结果变短就清掉旧全文，避免显示陈旧数据
+        deleteFullResult(callId);
       }
       if (sources.length) {
         updateLastVisible(conv.id, (n) => {
@@ -1045,6 +1075,9 @@ export default function App() {
         onRespondToolConfirm={respondToolConfirm}
         onRetryTool={retryToolStep}
         fullResultsMap={fullResultsRef.current}
+        // fullResultsVersion 仅用于在 mount 加载完后触发 App 重新渲染，
+        // 让子组件（ChatArea→MessageBubble→ResultDisplay）顺带重读 Map 内的最新全文
+        fullResultsVersion={fullResultsVersion}
       />
       <Settings
         open={settingsOpen}
