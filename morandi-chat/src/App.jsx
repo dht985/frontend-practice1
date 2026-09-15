@@ -6,7 +6,7 @@ import WorkbenchPanel from "./components/WorkbenchPanel";
 import { streamChat, runFiber } from "./api/chat";
 import { prepareAttachments, kindOf, formatSize } from "./api/files";
 import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
-import { isNativeTool, runNativeTool } from "./api/nativeTools";
+import { isNativeTool, runNativeTool, loadNativeToolSettings, saveNativeToolSettings, getEnabledNativeDecls } from "./api/nativeTools";
 import { todoList, onTodosChange } from "./api/todos";
 import TodoPanel from "./components/TodoPanel";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
@@ -152,6 +152,7 @@ export default function App() {
   }));
   const [promptLib, setPromptLib] = useState(() => loadJSON(PROMPTS_KEY, []));
   const [toolLib, setToolLib] = useState(loadToolLib);
+  const [nativeToolSettings, setNativeToolSettings] = useState(loadNativeToolSettings);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const abortRef = useRef(null); // 当前请求的 AbortController
   const userStoppedRef = useRef(false); // 标记是否用户手动停止（避免 onDone 覆盖 stopped 标记）
@@ -678,6 +679,7 @@ export default function App() {
       config: activeConfig,
       webSearch: useWebSearch,
       customTools: enabledTools,
+      nativeToolSettings,
       agentMode: useAgent,
       structured: workbench.structured,
       schemaText: workbench.schemaText,
@@ -809,6 +811,7 @@ export default function App() {
         config: activeConfig,
         webSearch: false,
         customTools: toolLib.filter((t) => t.enabled),
+        nativeToolSettings,
         structured: workbench.structured,
         schemaText: workbench.schemaText,
         genParams: buildGenParams(),
@@ -890,6 +893,7 @@ export default function App() {
       config: activeConfig,
       webSearch: false,
       customTools: toolLib.filter((t) => t.enabled),
+      nativeToolSettings,
       genParams: buildGenParams(),
       signal: controller.signal,
       onChunk: (chunk) => {
@@ -1019,7 +1023,7 @@ export default function App() {
         isStreaming={isStreaming}
         model={`${getProvider(activeConfig.provider).name} · ${activeConfig.model || "未设置模型"}`}
         webSearchAvailable={activeCaps.webSearch}
-        agentAvailable={true /* 预置内置工具 fetch_url/todo_list 始终可用 */}
+        agentAvailable={getEnabledNativeDecls(nativeToolSettings).length > 0 || toolLib.some((t) => t.enabled) || activeCaps.webSearch}
         onSend={handleSend}
         onStop={handleStop}
         onContinue={handleContinue}
@@ -1067,6 +1071,12 @@ export default function App() {
         onAddTool={addTool}
         onUpdateTool={updateTool}
         onDeleteTool={deleteTool}
+        nativeToolSettings={nativeToolSettings}
+        onToggleNativeTool={(name, enabled) => {
+          const next = { ...nativeToolSettings, [name]: enabled };
+          setNativeToolSettings(next);
+          saveNativeToolSettings(next);
+        }}
       />
     </div>
   );

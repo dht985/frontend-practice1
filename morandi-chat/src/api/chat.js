@@ -9,7 +9,7 @@
 
 import { getProvider, getParamCaps } from "./providers";
 import { compileTools, runLocalTool, isRetryableError } from "./tools";
-import { NATIVE_TOOL_DECLS, isNativeTool, nativeNeedsConfirm, runNativeTool } from "./nativeTools";
+import { getEnabledNativeDecls, isNativeTool, nativeNeedsConfirm, runNativeTool } from "./nativeTools";
 
 const FORMULA_URI = "moonshot/web-search:latest";
 const MAX_TOOL_ROUNDS = 6; // 防止异常情况下工具调用无限循环
@@ -204,6 +204,7 @@ export async function streamChat({
   config,
   webSearch = false,
   customTools = [],
+  nativeToolSettings = {},
   agentMode = false,
   structured = false,
   schemaText = "",
@@ -224,8 +225,10 @@ export async function streamChat({
     if (webSearch && !caps.webSearch) {
       console.info("[联网搜索] 当前服务商不支持，已忽略该选项");
     }
+    // 预置内置工具按启停设置过滤
+    const nativeDecls = getEnabledNativeDecls(nativeToolSettings);
     // 自定义 JS 工具（工作台定义，本地执行）→ OpenAI function 声明（内置工具名保留，用户工具重名自动改名）
-    const nativeNames = NATIVE_TOOL_DECLS.map((d) => d.function.name);
+    const nativeNames = nativeDecls.map((d) => d.function.name);
     const custom = compileTools(customTools, nativeNames);
     if (custom.declarations.length) {
       console.info(
@@ -233,8 +236,8 @@ export async function streamChat({
         custom.declarations.map((d) => d.function.name)
       );
     }
-    // 工具声明：联网搜索 + 预置内置工具（fetch_url/todo_list，始终可用）+ 用户自定义工具
-    const toolDecls = [...(wsTools || []), ...NATIVE_TOOL_DECLS, ...custom.declarations];
+    // 工具声明：联网搜索 + 预置内置工具（按开关过滤）+ 用户自定义工具
+    const toolDecls = [...(wsTools || []), ...nativeDecls, ...custom.declarations];
     console.info(
       `[请求] 服务商：${config.provider}，模型：${config.model}，联网搜索：${!!wsTools}，自定义工具：${custom.declarations.length} 个`
     );

@@ -7,6 +7,31 @@ import { fetchUrl } from "./fetcher";
 import { todoAdd, todoList, todoComplete, todoDelete } from "./todos";
 import { isRetryableError } from "./tools";
 
+const NATIVE_TOOLS_KEY = "morandi-chat-native-tools";
+
+// 默认全部启用
+export const DEFAULT_NATIVE_TOOL_SETTINGS = { fetch_url: true, todo_list: true };
+
+export function loadNativeToolSettings() {
+  try {
+    const raw = localStorage.getItem(NATIVE_TOOLS_KEY);
+    if (raw) {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object") {
+        // 合并默认值，保证新工具出现时默认启用
+        return { ...DEFAULT_NATIVE_TOOL_SETTINGS, ...obj };
+      }
+    }
+  } catch {
+    // 数据损坏按默认处理
+  }
+  return { ...DEFAULT_NATIVE_TOOL_SETTINGS };
+}
+
+export function saveNativeToolSettings(settings) {
+  localStorage.setItem(NATIVE_TOOLS_KEY, JSON.stringify(settings));
+}
+
 const WRITE_ACTIONS = new Set(["add", "complete", "delete"]);
 
 export const NATIVE_TOOL_DECLS = [
@@ -65,6 +90,11 @@ const NATIVE_NAMES = new Set(NATIVE_TOOL_DECLS.map((d) => d.function.name));
 
 export function isNativeTool(name) {
   return NATIVE_NAMES.has(name);
+}
+
+// 按启停设置过滤预置工具声明
+export function getEnabledNativeDecls(settings = {}) {
+  return NATIVE_TOOL_DECLS.filter((d) => settings[d.function.name] !== false);
 }
 
 function parseArgs(argsJson) {

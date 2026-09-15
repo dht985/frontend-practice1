@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { NATIVE_TOOL_DECLS } from "../api/nativeTools";
 
 // 内置系统提示词模板（内置不可删）
 const BUILTIN_PROMPTS = [
@@ -190,6 +191,7 @@ export default function WorkbenchPanel({
   responseFormat,
   promptLib, onAddTemplate, onDeleteTemplate,
   toolLib, onAddTool, onUpdateTool, onDeleteTool,
+  nativeToolSettings, onToggleNativeTool,
 }) {
   const [tab, setTab] = useState("curl");
   const [copied, setCopied] = useState(false);
@@ -436,6 +438,28 @@ export default function WorkbenchPanel({
                            leading-relaxed text-ink bg-white/70 focus:border-peach transition-colors resize-y"
               />
             )}
+          </section>
+
+          {/* —— 预置工具（fetch_url / todo_list） —— */}
+          <section className="space-y-2">
+            <h3 className="text-[13px] font-semibold text-ink">预置工具</h3>
+            <p className="text-[10px] text-muted/80 leading-snug">
+              内置的 fetch_url（网页抓取）与 todo_list（本地待办）可在此启停。关闭后不随请求声明给模型，Agent 按钮可用性也会跟随实际工具数。
+            </p>
+            {NATIVE_TOOL_DECLS.map((d) => {
+              const name = d.function.name;
+              const enabled = nativeToolSettings?.[name] !== false;
+              const desc = d.function.description.split("。")[0];
+              return (
+                <div key={name} className="flex items-center gap-2 px-3 py-2 border border-line/70 rounded-xl bg-white/50">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[12.5px] text-ink font-medium">{name}</span>
+                    <p className="text-[10.5px] text-muted truncate">{desc}</p>
+                  </div>
+                  <Toggle checked={enabled} onChange={(v) => onToggleNativeTool?.(name, v)} />
+                </div>
+              );
+            })}
           </section>
 
           {/* —— 自定义工具（Function Calling） —— */}
