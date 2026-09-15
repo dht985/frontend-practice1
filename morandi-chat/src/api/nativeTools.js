@@ -17,8 +17,8 @@ export function loadNativeToolSettings() {
     const raw = localStorage.getItem(NATIVE_TOOLS_KEY);
     if (raw) {
       const obj = JSON.parse(raw);
-      if (obj && typeof obj === "object") {
-        // 合并默认值，保证新工具出现时默认启用
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        // 合并默认值，保证新工具出现时默认启用；排除数组等非 plain object
         return { ...DEFAULT_NATIVE_TOOL_SETTINGS, ...obj };
       }
     }
