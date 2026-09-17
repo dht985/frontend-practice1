@@ -4,9 +4,13 @@
 // 前端把 VITE_FETCH_ENDPOINT 指过去即可，无需改动抓取与解析逻辑。
 //
 // 安全/稳定性约束：
-//   - 仅允许 http/https（前端还会再校验一次）
+//   - 仅允许 http/https，且只放行 80/443 端口（前端还会再校验一次）
+//   - 拦截本机环回、私网、链路本地与云厂商元数据地址（见 urlGuard.js）：
+//     DNS 解析出的每个地址都要校验，重定向逐跳校验，避免被当成内网跳板
 //   - 15 秒超时；仅放行网页类 Content-Type；响应体最多读取 2MB（超出截断）
 //   - 不转发用户 Cookie，只能抓取公开页面
+
+import { assertSafeTarget, MAX_REDIRECTS } from "./urlGuard.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
@@ -42,18 +46,36 @@ export default function fetchProxyPlugin() {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
         let resp;
+        let redirects = 0;
+        let currentUrl = target;
         try {
-          resp = await fetch(target, {
-            redirect: "follow",
-            signal: ctrl.signal,
-            headers: {
-              accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-              "user-agent":
-                "Mozilla/5.0 (compatible; MorandiChatFetcher/1.0; +https://localhost) AppleWebKit/537.36",
-            },
-          });
+          // 手动跟随重定向：每一跳都重新做安全检查（公网地址 302 到内网是常见绕过手法）
+          for (;;) {
+            await assertSafeTarget(currentUrl);
+            resp = await fetch(currentUrl, {
+              redirect: "manual",
+              signal: ctrl.signal,
+              headers: {
+                accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
+                "user-agent":
+                  "Mozilla/5.0 (compatible; MorandiChatFetcher/1.0; +https://localhost) AppleWebKit/537.36",
+              },
+            });
+            const location =
+              resp.status >= 300 && resp.status < 400 ? resp.headers.get("location") : null;
+            if (!location) break;
+            resp.body?.cancel?.().catch(() => {});
+            if (redirects >= MAX_REDIRECTS) {
+              throw new Error(`重定向次数超过上限（${MAX_REDIRECTS} 次）`);
+            }
+            redirects += 1;
+            currentUrl = new URL(location, currentUrl).toString();
+          }
         } catch (err) {
           clearTimeout(timer);
+          if (err?.code === "unsafe_target") {
+            return sendJson(res, err.httpStatus || 403, { ok: false, error: err.message });
+          }
           const timedOut = err?.name === "AbortError";
           return sendJson(res, timedOut ? 504 : 502, {
             ok: false,
@@ -64,7 +86,7 @@ export default function fetchProxyPlugin() {
         }
         clearTimeout(timer);
 
-        const finalUrl = resp.url || target;
+        const finalUrl = resp.url || currentUrl;
         const contentType = resp.headers.get("content-type") || "";
 
         // 目标站点返回 4xx/5xx：不下载正文，把状态码带回前端（前端据此决定是否可重试）

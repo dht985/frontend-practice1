@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { memo, useState, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PrismLight as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -352,7 +352,7 @@ function ResultDisplay({ previewText, full, color, expanded, onToggle }) {
   );
 }
 
-function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryTool, fullResultsMap }) {
+function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryTool, onReAnswer, fullResultsMap }) {
   const [open, setOpen] = useState(false);
   const [expandedIds, setExpandedIds] = useState({}); // 步骤 id → 是否已展开全文
   const hasAwaiting = steps.some((s) => s.status === "awaiting");
@@ -484,6 +484,25 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
                     重新尝试
                   </button>
                 )}
+                {/* 手动重跑成功：明确这是「仅本地重跑」，并给出让模型重新作答的入口 */}
+                {s.status === "done" && s.manualRetry && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1 ml-3.5">
+                    <span className="text-[10.5px] text-muted/70">
+                      已重跑（仅本地结果，未影响当前回答）
+                    </span>
+                    {onReAnswer && (
+                      <button
+                        type="button"
+                        onClick={() => onReAnswer(s.id)}
+                        className="px-2 py-0.5 rounded-md border border-line text-[10.5px] text-ink/80
+                                   hover:text-ink hover:border-sagedeep/50 hover:bg-sage/30
+                                   transition-colors inline-flex items-center gap-1"
+                      >
+                        用新结果重新回答
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             );
@@ -494,7 +513,9 @@ function ToolSteps({ steps, streaming, pendingConfirms = {}, onRespond, onRetryT
   );
 }
 
-export default function MessageBubble({ message, index, entry, isLast = false, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
+function MessageBubble({ message: rawMessage, index, streamingText = null, isLast = false, versionParentId, versionIndex = 0, versionCount = 1, onRetry, onRegenerate, onEdit, onSwitchVersion, pendingConfirms, onRespondToolConfirm, onRetryTool, onReAnswer, fullResultsMap }) {
+  // 流式期间用独立文本渲染，避免每个 token 深拷贝对话树后的重渲染开销
+  const message = streamingText === null ? rawMessage : { ...rawMessage, content: streamingText };
   const isUser = message.role === "user";
   const [copied, setCopied] = useState(false);
   const isError = !isUser && String(message.content).startsWith("⚠️");
@@ -510,6 +531,28 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
       return null;
     }
   }, [isUser, message.streaming, isError, message.content]);
+
+  // Markdown 解析开销大：只有内容变化时才重新解析（流式期间按节流后的文本更新）
+  const markdown = useMemo(
+    () => (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || "");
+            return match ? (
+              <CodeBlock language={match[1]}>{children}</CodeBlock>
+            ) : (
+              <code className={className} {...props}>{children}</code>
+            );
+          },
+        }}
+      >
+        {String(message.content)}
+      </ReactMarkdown>
+    ),
+    [message.content]
+  );
 
   const handleCopy = async () => {
     try {
@@ -585,6 +628,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
               pendingConfirms={pendingConfirms}
               onRespond={onRespondToolConfirm}
               onRetryTool={onRetryTool}
+              onReAnswer={onReAnswer}
               fullResultsMap={fullResultsMap}
             />
           ) : message.searching ? (
@@ -602,21 +646,7 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
           {jsonMsg !== null ? (
             <JsonPanel data={jsonMsg} raw={String(message.content).trim()} />
           ) : message.content ? (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code({ className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  return match ? (
-                    <CodeBlock language={match[1]}>{children}</CodeBlock>
-                  ) : (
-                    <code className={className} {...props}>{children}</code>
-                  );
-                },
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+            {markdown}
           ) : message.streaming && !message.searching && !message.hint && !message.toolSteps?.length ? (
             <span className="inline-flex items-center gap-1 text-muted text-sm">
               正在思考
@@ -659,11 +689,11 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
         </div>
 
         {/* 版本切换 < y/x >：消息存在多版本时显示（用户消息多版本=修改分支；AI 消息多版本=换回答） */}
-        {entry?.parent?.children?.length > 1 && onSwitchVersion && (
+        {versionCount > 1 && onSwitchVersion && (
           <div className="flex items-center gap-0.5 mt-1.5 not-prose text-[11px] text-ink/80">
             <button
-              onClick={() => onSwitchVersion(entry.parent.id, -1)}
-              disabled={entry.index <= 0}
+              onClick={() => onSwitchVersion(versionParentId, -1)}
+              disabled={versionIndex <= 0}
               title="上一版"
               className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/70
                          hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
@@ -671,11 +701,11 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
               &lt;
             </button>
             <span className="tabular-nums px-0.5">
-              {entry.index + 1}/{entry.parent.children.length}
+              {versionIndex + 1}/{versionCount}
             </span>
             <button
-              onClick={() => onSwitchVersion(entry.parent.id, 1)}
-              disabled={entry.index >= entry.parent.children.length - 1}
+              onClick={() => onSwitchVersion(versionParentId, 1)}
+              disabled={versionIndex >= versionCount - 1}
               title="下一版"
               className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/70
                          hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent transition-colors"
@@ -771,3 +801,5 @@ export default function MessageBubble({ message, index, entry, isLast = false, o
     </div>
   );
 }
+
+export default memo(MessageBubble);

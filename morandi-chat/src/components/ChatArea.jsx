@@ -21,7 +21,23 @@ const SUGGESTIONS = [
   { icon: "✍️", dot: "bg-blush/80", title: "润色文字", text: "帮我把一段话润色得更专业、更简洁" },
 ];
 
-export default function ChatArea({ messages, entries = [], isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
+export default function ChatArea({ messages, entries = [], liveStream = null, isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, onReAnswer, fullResultsMap }) {
+  // 传给 MessageBubble 的回调统一用 ref 转发：它是 React.memo 组件，
+  // 回调引用每次渲染都变的话 memo 会完全失效。
+  const cbRef = useRef({});
+  const stableCb = useRef(null);
+  if (!stableCb.current) {
+    const call = (key, ...args) => cbRef.current[key]?.(...args);
+    stableCb.current = {
+      onRetry: () => call("onRetry"),
+      onRegenerate: () => call("onRegenerate"),
+      onEdit: (index) => call("onEdit", index),
+      onSwitchVersion: (parentId, dir) => call("onSwitchVersion", parentId, dir),
+      onRespondToolConfirm: (callId, ok) => call("onRespondToolConfirm", callId, ok),
+      onRetryTool: (callId) => call("onRetryTool", callId),
+      onReAnswer: (callId) => call("onReAnswer", callId),
+    };
+  }
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [agentMode, setAgentMode] = useState(false);
@@ -31,6 +47,7 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
   // 语音录入（Edge 走微软服务；Chrome 需可访问 Google）
   const speech = useSpeechInput(setInput);
   const endRef = useRef(null);
+  const scrollRef = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const modelMenuRef = useRef(null);
@@ -38,6 +55,13 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // 流式输出期间保持贴底，但用户主动上滑查看历史时不打扰
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
+  }, [liveStream]);
 
   // 输入框自适应高度
   useEffect(() => {
@@ -121,6 +145,16 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
     setInput(m.content);
     setEditingIndex(i);
     requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  cbRef.current = {
+    onRetry,
+    onRegenerate,
+    onEdit: startEdit,
+    onSwitchVersion,
+    onRespondToolConfirm,
+    onRetryTool,
+    onReAnswer,
   };
 
   const cancelEdit = () => {
@@ -273,7 +307,7 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
       </header>
 
       {/* 消息区 */}
-      <div className="relative z-10 flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="relative z-10 flex-1 overflow-y-auto">
         {empty ? (
           /* —— 空状态 —— */
           <div className="h-full flex flex-col items-center justify-center px-6">
@@ -318,23 +352,33 @@ export default function ChatArea({ messages, entries = [], isStreaming, model, w
           </div>
         ) : (
           <div className="max-w-3xl mx-auto px-4 md:px-6 py-5 md:py-6 space-y-5">
-            {messages.map((m, i) => (
-              <MessageBubble
-                key={m.id || i}
-                message={m}
-                index={i}
-                entry={entries[i]}
-                isLast={i === messages.length - 1}
-                onRetry={onRetry}
-                onRegenerate={onRegenerate}
-                onEdit={startEdit}
-                onSwitchVersion={onSwitchVersion}
-                pendingConfirms={pendingConfirms}
-                onRespondToolConfirm={onRespondToolConfirm}
-                onRetryTool={onRetryTool}
-                fullResultsMap={fullResultsMap}
-              />
-            ))}
+            {messages.map((m, i) => {
+              const entry = entries[i];
+              // 流式文本只覆盖正在生成的那一条；其余消息保持原对象引用，
+              // 这样 React.memo 才能让它们跳过重渲染。
+              const streamingText = liveStream && liveStream.nodeId === m.id ? liveStream.text : null;
+              return (
+                <MessageBubble
+                  key={m.id || i}
+                  message={m}
+                  index={i}
+                  streamingText={streamingText}
+                  isLast={i === messages.length - 1}
+                  versionParentId={entry?.parent?.id}
+                  versionIndex={entry?.index ?? 0}
+                  versionCount={entry?.parent?.children?.length ?? 1}
+                  onRetry={stableCb.current.onRetry}
+                  onRegenerate={stableCb.current.onRegenerate}
+                  onEdit={stableCb.current.onEdit}
+                  onSwitchVersion={stableCb.current.onSwitchVersion}
+                  pendingConfirms={pendingConfirms}
+                  onRespondToolConfirm={stableCb.current.onRespondToolConfirm}
+                  onRetryTool={stableCb.current.onRetryTool}
+                  onReAnswer={stableCb.current.onReAnswer}
+                  fullResultsMap={fullResultsMap}
+                />
+              );
+            })}
             <div ref={endRef} className="h-2" />
           </div>
         )}
