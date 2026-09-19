@@ -164,7 +164,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-15 个测试文件、284 个用例（含整链路与 Worker 测试）：
+17 个测试文件、304 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -181,6 +181,8 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/api/__tests__/providers.test.js` | 生成参数能力：推理模型（kimi-k3 变体 / reasoner / o 系列）不发送采样参数 |
 | `src/api/__tests__/contextBudget.test.js` | 上下文预算：中英文与多模态/附件的 token 估算、按预算整轮裁剪、最后一轮永远保留 |
 | `src/api/__tests__/conversationStore.test.js` | 对话数据层：单条读写/排序/删除、schema 版本、从 localStorage 迁移与回滚备份 |
+| `src/state/__tests__/conversationTree.test.js` | 对话树纯逻辑：可见路径与多版本分支、查找遍历、旧结构迁移 |
+| `src/state/__tests__/liveStreamBuffer.test.js` | 流式缓冲：token 节流合并、正文与思考过程分离、结束与清理 |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 | `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
@@ -208,6 +210,8 @@ morandi-chat/
 │  │  ├─ tools.js          # 自定义工具编译/执行
 │  │  ├─ nativeTools.js    # 内置工具（fetch_url / todo_list）
 │  │  └─ todos.js          # 待办存储
+│  ├─ hooks/               # useConversationStore（对话 store）、useLiveStream、useContextBudget
+│  ├─ state/               # 纯逻辑：conversationTree（对话树）、liveStreamBuffer（流式缓冲）
 │  └─ components/          # ChatArea / MessageBubble / RichContent（代码高亮、JSON 面板）/ Sidebar / Settings …
 ```
 

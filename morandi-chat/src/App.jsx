@@ -9,7 +9,10 @@ import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
 import { isNativeTool, runNativeTool, loadNativeToolSettings, saveNativeToolSettings, getEnabledNativeDecls } from "./api/nativeTools";
 import { todoList, onTodosChange } from "./api/todos";
 import TodoPanel from "./components/TodoPanel";
-import useConversationPersistence from "./hooks/useConversationPersistence";
+import useConversationStore from "./hooks/useConversationStore";
+import useLiveStream from "./hooks/useLiveStream";
+import useContextBudget from "./hooks/useContextBudget";
+import { collectUserNodeIds, makeNode, migrateConv, uid, visibleChain } from "./state/conversationTree";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 import {
   loadAllFullResults,
@@ -168,70 +171,20 @@ function buildTimeMessage() {
   };
 }
 
-// —— 对话树：支持同一条用户消息的多版本分支（像 DeepSeek 那样 < y/x > 切换）——
-// 节点：{ id, role, content, children: [...], active: 0, ...UI字段 }
-// conversation.tree 为虚拟根节点（role: "root"，仅承载 children/active）
-const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const makeNode = (role, content, extra = {}) => ({
-  id: uid(),
-  role,
-  content,
-  children: [],
-  active: 0,
-  ...extra,
-});
-
-const makeRoot = () => ({ id: uid(), role: "root", content: "", children: [], active: 0 });
-
-// 沿 active 指针走出的当前可见路径，返回 [{ node, parent, index }]（parent 含虚拟根）
-function visibleChain(tree) {
-  const chain = [];
-  if (!tree || !tree.children.length) return chain;
-  let parent = tree;
-  let idx = Math.min(Math.max(tree.active, 0), tree.children.length - 1);
-  for (;;) {
-    const node = parent.children[idx];
-    chain.push({ node, parent, index: idx });
-    if (!node.children.length) break;
-    parent = node;
-    idx = Math.min(Math.max(node.active, 0), node.children.length - 1);
-  }
-  return chain;
-}
-
-// 收集树上所有 user 节点的 id（删除对话时联动清理附件内容）
-function collectUserNodeIds(tree) {
-  const ids = [];
-  const walk = (node) => {
-    if (!node) return;
-    if (node.role === "user") ids.push(node.id);
-    for (const child of node.children || []) walk(child);
-  };
-  walk(tree);
-  return ids;
-}
-
-// 旧版扁平 messages → 树结构（一次性迁移）
-function migrateConv(c) {
-  if (c.tree) return c;
-  const root = makeRoot();
-  let parent = root;
-  for (const m of c.messages || []) {
-    const node = makeNode(m.role, m.content);
-    if (m.attachments) node.attachments = m.attachments;
-    parent.children.push(node);
-    parent = node;
-  }
-  const out = { ...c, tree: root };
-  delete out.messages;
-  return out;
-}
 
 export default function App() {
-  // 对话数据从 IndexedDB 读取（含从 localStorage 的一次性迁移），
-  // 之后按单条记录增量写回；见 hooks/useConversationPersistence
-  const { conversations, setConversations } = useConversationPersistence({ migrateConv });
+  // 对话数据与树操作都收在 store hook 里：IndexedDB 加载/迁移/增量写回 + 会话增删改
+  const {
+    conversations,
+    setConversations,
+    createConversation,
+    removeConversation,
+    renameConversation,
+    applyDefaultTitle,
+    setConvTree,
+    updateLastVisible,
+  } = useConversationStore({ migrateConv });
   const [activeId, setActiveId] = useState(() => loadJSON(ACTIVE_KEY, null));
   const [isStreaming, setIsStreaming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -259,17 +212,15 @@ export default function App() {
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
   const [todoBadge, setTodoBadge] = useState(0); // 侧边栏待办入口的未完成角标
   const [storageError, setStorageError] = useState(null); // localStorage 配额等
-  // 上一次发送因上下文预算被裁剪掉的历史（仅用于界面提示）
-  const [trimNotice, setTrimNotice] = useState(null);
+
   // 附件内容（多模态 parts / 文档抽取文本）：按 user 节点 id 保存，
   // 树里只留元信息；重试、换回答、后续轮次都从这里取回原始附件。
   const attachmentsRef = useRef(new Map());
   // 流式输出文本：独立于对话树，token 只写这里，树在开始 / 工具步骤 / 结束时才写回，
   // 避免每个 token 深拷贝整棵树并触发全量重渲染。
   // reasoning 是思考过程（Kimi K3 / reasoner），与正文分开累积，供「思考中」折叠块实时展示。
-  const liveRef = useRef(null); // { convId, nodeId, text, reasoning }
-  const liveTimerRef = useRef(0);
-  const [liveStream, setLiveStream] = useState(null); // 渲染用快照
+  const { liveStream, beginLiveStream, appendLiveStream, appendLiveReasoning, endLiveStream } =
+    useLiveStream();
 
   // 待办角标：初始读一次，之后任何来源（模型工具写入/面板操作/其他标签页）变更都实时刷新
   useEffect(() => {
@@ -309,7 +260,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // 对话持久化已迁到 IndexedDB，见 hooks/useConversationPersistence
+  // 对话持久化在 store hook 里完成（见 hooks/useConversationStore），这里不用再手动落盘
 
   // 记住上次打开的对话；若该对话已不存在则回退为空
   useEffect(() => {
@@ -343,8 +294,7 @@ export default function App() {
   }, [toolLib]);
 
   const handleNew = () => {
-    const id = Date.now().toString();
-    setConversations((prev) => [{ id, title: "新对话", tree: makeRoot() }, ...prev]);
+    const id = createConversation();
     setActiveId(id);
     return id;
   };
@@ -364,7 +314,7 @@ export default function App() {
         deleteAttachments(nodeId);
       }
     }
-    setConversations((prev) => prev.filter((c) => c.id !== id));
+    removeConversation(id);
     if (activeId === id) setActiveId(null);
   };
 
@@ -449,91 +399,12 @@ export default function App() {
   const visibleEntries = activeConv?.tree ? visibleChain(activeConv.tree) : [];
   const messages = visibleEntries.map((e) => e.node);
 
-  // —— 流式文本缓冲：token 级更新只改这一份 state，完全不碰对话树 ——
-  const flushLive = () => setLiveStream(liveRef.current ? { ...liveRef.current } : null);
 
-  // 开始一次流式输出（baseText 用于「继续生成」时接在已有内容之后）
-  const beginLiveStream = (convId, nodeId, baseText = "") => {
-    liveRef.current = { convId, nodeId, text: baseText, reasoning: "" };
-    flushLive();
-  };
 
-  // 追加 token：60ms 合并一次渲染，把渲染次数从每 token 降到每秒十几次
-  const appendLiveStream = (chunk) => {
-    if (!liveRef.current) return;
-    liveRef.current.text += chunk;
-    if (liveTimerRef.current) return;
-    liveTimerRef.current = setTimeout(() => {
-      liveTimerRef.current = 0;
-      flushLive();
-    }, 60);
-  };
 
-  // 追加思考过程 token：与正文共用同一节流定时器
-  const appendLiveReasoning = (chunk) => {
-    if (!liveRef.current) return;
-    liveRef.current.reasoning += chunk;
-    if (liveTimerRef.current) return;
-    liveTimerRef.current = setTimeout(() => {
-      liveTimerRef.current = 0;
-      flushLive();
-    }, 60);
-  };
 
-  // 结束流式并取回最终文本与思考过程（正常结束、停止、出错都要调用）
-  const endLiveStream = () => {
-    if (liveTimerRef.current) {
-      clearTimeout(liveTimerRef.current);
-      liveTimerRef.current = 0;
-    }
-    const snapshot = liveRef.current;
-    const text = snapshot?.text ?? "";
-    const reasoning = snapshot?.reasoning ?? "";
-    liveRef.current = null;
-    flushLive();
-    return { text, reasoning };
-  };
-
-  // 树更新：克隆当前树 → 在 updater 中原地修改 → 写回
-  const setConvTree = (convId, updater) => {
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id !== convId) return c;
-        const tree = structuredClone(c.tree || makeRoot());
-        updater(tree);
-        return { ...c, tree };
-      })
-    );
-  };
-
-  // 更新当前可见路径的最后一个节点（流式输出中的所有回调整它）
-  const updateLastVisible = (convId, updater) => {
-    setConvTree(convId, (tree) => {
-      const chain = visibleChain(tree);
-      if (chain.length) updater(chain[chain.length - 1].node);
-    });
-  };
-
-  // 按上下文预算裁剪历史：固定部分（system 提示、本轮提问、回灌内容）先扣掉，
-  // 再从最早的整轮开始丢弃。裁剪结果通过 trimNotice 回报给界面。
-  const planHistory = (nodes, { convId, systemMessages = [], extraFixed = [] }) => {
-    const plan = trimNodesToBudget(nodes, attachmentsRef.current, {
-      budgetTokens: workbench.contextWindow || DEFAULT_CONTEXT_WINDOW,
-      reservedTokens: reservedOutputTokens(workbench.maxTokens),
-      fixedTokens: estimateMessagesTokens([...systemMessages, ...extraFixed]),
-    });
-    setTrimNotice(
-      plan.droppedTurns > 0
-        ? {
-            convId,
-            droppedTurns: plan.droppedTurns,
-            estimatedTokens: plan.estimatedTokens,
-            budgetTokens: plan.budgetTokens,
-          }
-        : null
-    );
-    return plan;
-  };
+  // 上下文预算：超预算时按整轮裁剪，并把裁剪情况写到 trimNotice 供界面提示
+  const { planHistory, trimNotice } = useContextBudget({ workbench, attachmentsRef });
 
   // 工具执行步骤回调（发送 / 继续共用）：start 追加 running 步骤，result 回填状态
   const toolStepHandler = (convId) => (step) => {
@@ -933,11 +804,7 @@ export default function App() {
         }
       });
 
-      setConversations((prev) =>
-        prev.map((c) =>
-          c.id === convId && c.title === "新对话" ? { ...c, title: title.slice(0, 20) } : c
-        )
-      );
+      applyDefaultTitle(convId, title);
     }
 
     setIsStreaming(true);
@@ -1240,7 +1107,7 @@ export default function App() {
   const handleRename = (id, title) => {
     const t = (title || "").trim();
     if (!t) return;
-    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title: t.slice(0, 30) } : c)));
+    renameConversation(id, t);
   };
 
   // 导出当前可见对话为 Markdown 文件
