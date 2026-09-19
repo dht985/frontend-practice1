@@ -3,10 +3,10 @@
 // 迁移正式后端时，只需把 VITE_FETCH_ENDPOINT 指向提供同样 JSON 信封的后端地址。
 
 import { Readability } from "@mozilla/readability";
+import { assertSafeFetchUrl } from "./urlSafety";
 
 const FETCH_ENDPOINT = import.meta.env.VITE_FETCH_ENDPOINT || "/__fetch__";
 const MAX_CONTENT_CHARS = 20_000; // 回传给模型的正文上限（约 6~8k tokens），超出截断
-const HTTP_URL_RE = /^https?:\/\//i;
 
 const JUNK_TAGS = [
   "script",
@@ -168,22 +168,9 @@ export function truncateAtBoundary(text, max) {
   return { text: head.slice(0, cut).trimEnd(), truncated: true };
 }
 
-// fetch_url 入口：校验 URL → 抓取 → 提取 → 截断，返回 { title, url, content, truncated }
+// fetch_url 入口：校验 URL（含私网/环回/云元数据拦截）→ 抓取 → 提取 → 截断，返回 { title, url, content, truncated }
 export async function fetchUrl(rawUrl, signal) {
-  const url = String(rawUrl || "").trim();
-  if (!url) throw new Error("参数不合法：url 不能为空");
-  if (!HTTP_URL_RE.test(url)) {
-    throw new Error("参数不合法：仅支持 http:// 或 https:// 开头的网页地址");
-  }
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("参数不合法：url 无法解析，请传入完整网址");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("参数不合法：仅支持 http/https 协议");
-  }
+  const url = assertSafeFetchUrl(rawUrl);
 
   const env = await fetchPageEnvelope(url, signal);
   const { title, text } = extractReadable(env.html);

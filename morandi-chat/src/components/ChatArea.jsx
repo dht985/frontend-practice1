@@ -21,7 +21,7 @@ const SUGGESTIONS = [
   { icon: "✍️", dot: "bg-blush/80", title: "润色文字", text: "帮我把一段话润色得更专业、更简洁" },
 ];
 
-export default function ChatArea({ messages, entries = [], liveStream = null, isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, onReAnswer, fullResultsMap }) {
+export default function ChatArea({ messages, entries = [], liveStream = null, isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
   // 传给 MessageBubble 的回调统一用 ref 转发：它是 React.memo 组件，
   // 回调引用每次渲染都变的话 memo 会完全失效。
   const cbRef = useRef({});
@@ -35,7 +35,6 @@ export default function ChatArea({ messages, entries = [], liveStream = null, is
       onSwitchVersion: (parentId, dir) => call("onSwitchVersion", parentId, dir),
       onRespondToolConfirm: (callId, ok) => call("onRespondToolConfirm", callId, ok),
       onRetryTool: (callId) => call("onRetryTool", callId),
-      onReAnswer: (callId) => call("onReAnswer", callId),
     };
   }
   const [input, setInput] = useState("");
@@ -154,7 +153,6 @@ export default function ChatArea({ messages, entries = [], liveStream = null, is
     onSwitchVersion,
     onRespondToolConfirm,
     onRetryTool,
-    onReAnswer,
   };
 
   const cancelEdit = () => {
@@ -357,12 +355,14 @@ export default function ChatArea({ messages, entries = [], liveStream = null, is
               // 流式文本只覆盖正在生成的那一条；其余消息保持原对象引用，
               // 这样 React.memo 才能让它们跳过重渲染。
               const streamingText = liveStream && liveStream.nodeId === m.id ? liveStream.text : null;
+              const streamingReasoning = liveStream && liveStream.nodeId === m.id ? liveStream.reasoning : null;
               return (
                 <MessageBubble
                   key={m.id || i}
                   message={m}
                   index={i}
                   streamingText={streamingText}
+                  streamingReasoning={streamingReasoning}
                   isLast={i === messages.length - 1}
                   versionParentId={entry?.parent?.id}
                   versionIndex={entry?.index ?? 0}
@@ -374,7 +374,6 @@ export default function ChatArea({ messages, entries = [], liveStream = null, is
                   pendingConfirms={pendingConfirms}
                   onRespondToolConfirm={stableCb.current.onRespondToolConfirm}
                   onRetryTool={stableCb.current.onRetryTool}
-                  onReAnswer={stableCb.current.onReAnswer}
                   fullResultsMap={fullResultsMap}
                 />
               );

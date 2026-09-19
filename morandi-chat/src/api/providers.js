@@ -92,6 +92,10 @@ export function newProfileId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// 显式声明不接受 temperature/top_p 的推理类模型（由推理强度控制，采样参数会 400）。
+// 采用显式集合 + 前缀兜底：OpenAI o 系列命名会持续出新（o1/o3/o4…），前缀匹配更稳妥。
+const REASONING_MODELS = new Set(["kimi-k3", "deepseek-reasoner"]);
+
 // 生成参数能力：temperature/top_p 是 OpenAI 兼容协议的通用采样参数，
 // 但推理类模型（Kimi K3、DeepSeek reasoner、OpenAI o 系列）由推理强度控制，不接受采样参数
 // 返回 { temperature, topP, maxTokens, stop }
@@ -99,8 +103,7 @@ export function getParamCaps(providerId, model = "") {
   const base = { temperature: true, topP: true, maxTokens: true, stop: true };
   const m = (model || "").toLowerCase();
   const reasoningModel =
-    (providerId === "kimi" && m.startsWith("kimi-k3")) ||
-    (providerId === "deepseek" && m.includes("reasoner")) ||
+    REASONING_MODELS.has(m) ||
     (providerId === "openai" && /^o\d/.test(m));
   return reasoningModel
     ? { ...base, temperature: false, topP: false }

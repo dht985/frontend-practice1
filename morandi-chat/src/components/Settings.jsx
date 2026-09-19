@@ -52,6 +52,7 @@ export default function Settings({ open, config, onUpsert, onActivate, onDelete,
       baseURL: preset.baseURL,
       apiKey: "",
       model: preset.model,
+      persistKey: true,
     };
     onUpsert(profile);
     setEditId(profile.id);
@@ -65,6 +66,7 @@ export default function Settings({ open, config, onUpsert, onActivate, onDelete,
       baseURL: form.baseURL.trim(),
       apiKey: form.apiKey.trim(),
       model: form.model.trim(),
+      persistKey: form.persistKey !== false,
     });
     onClose();
   };
@@ -179,6 +181,17 @@ export default function Settings({ open, config, onUpsert, onActivate, onDelete,
               placeholder="sk-..."
               className={field}
             />
+            <label className="flex items-start gap-2 mt-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.persistKey === false}
+                onChange={(e) => setForm({ ...form, persistKey: !e.target.checked })}
+                className="mt-0.5 accent-peach"
+              />
+              <span className="text-xs text-muted leading-snug">
+                仅本次会话保存 Key（存 sessionStorage，关闭标签页即清除，不写入本地磁盘）
+              </span>
+            </label>
           </div>
 
           <div>

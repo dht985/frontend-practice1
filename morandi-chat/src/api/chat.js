@@ -16,7 +16,8 @@ const MAX_TOOL_ROUNDS = 6; // 防止异常情况下工具调用无限循环
 const AGENT_MAX_ROUNDS = 10; // Agent 模式允许更多轮自主工具调用
 const TOOL_AUTO_RETRY = 2; // 工具暂时性错误自动重试次数（指数退避：400ms → 800ms）
 
-let toolsCache = null;
+// 按 baseURL 缓存联网搜索工具声明（声明是静态的；不同 Kimi 端点/账号各存一份）
+const toolsCache = new Map();
 
 async function authHeaders(config) {
   return {
@@ -27,7 +28,8 @@ async function authHeaders(config) {
 
 // 获取联网搜索工具声明（进程内缓存，声明是静态的）
 async function getWebSearchTools(config) {
-  if (toolsCache) return toolsCache;
+  const cached = toolsCache.get(config.baseURL);
+  if (cached) return cached;
   const resp = await fetch(`${config.baseURL}/formulas/${FORMULA_URI}/tools`, {
     headers: { Authorization: `Bearer ${config.apiKey}` },
   });
@@ -36,13 +38,13 @@ async function getWebSearchTools(config) {
     throw new Error(`获取联网搜索工具失败 (${resp.status})：${t.slice(0, 200)}`);
   }
   const data = await resp.json();
-  toolsCache = data.tools;
-  return toolsCache;
+  toolsCache.set(config.baseURL, data.tools);
+  return data.tools;
 }
 
 // 执行一次流式 chat completion，实时回调 content，并累积可能出现的 tool_calls
 // genParams: { temperature, topP, maxTokens, stop }（0/空 表示不发送；按模型能力过滤）
-async function streamOnce(messages, config, tools, onChunk, signal, genParams = {}, structured = false) {
+async function streamOnce(messages, config, tools, onChunk, signal, genParams = {}, structured = false, onReasoning = null) {
   const caps = getProvider(config.provider).caps;
   const paramCaps = getParamCaps(config.provider, config.model);
   const body = {
@@ -82,6 +84,7 @@ async function streamOnce(messages, config, tools, onChunk, signal, genParams = 
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let content = "";
+  let reasoning = "";
   const toolCalls = [];
   let finishReason = null;
   let usage = null;
@@ -115,7 +118,12 @@ async function streamOnce(messages, config, tools, onChunk, signal, genParams = 
         if (choice.finish_reason) finishReason = choice.finish_reason;
 
         const delta = choice.delta || {};
-        // K3 的思考过程在 reasoning_content，这里忽略，只展示正式回答
+        // 思考过程：Kimi K3 / DeepSeek reasoner 走 reasoning_content，OpenAI o 系列可能走 reasoning
+        const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
+        if (reasoningDelta) {
+          reasoning += reasoningDelta;
+          onReasoning && onReasoning(reasoningDelta);
+        }
         if (delta.content) {
           content += delta.content;
           onChunk && onChunk(delta.content);
@@ -142,7 +150,7 @@ async function streamOnce(messages, config, tools, onChunk, signal, genParams = 
     }
   }
 
-  return { content, toolCalls: toolCalls.filter(Boolean), finishReason, usage };
+  return { content, reasoning, toolCalls: toolCalls.filter(Boolean), finishReason, usage };
 }
 
 // 通过 Formula fiber 执行一次工具（web-search 为 protected，结果在 encrypted_output）
@@ -211,6 +219,7 @@ export async function streamChat({
   genParams = {},
   signal,
   onChunk,
+  onReasoning,
   onStatus,
   onSources,
   onToolStep,
@@ -275,7 +284,7 @@ export async function streamChat({
 
     for (let round = 0; round <= maxRounds; round++) {
       const { content, toolCalls, usage } = await streamOnce(
-        convo, config, toolDecls.length ? toolDecls : null, onChunk, signal, genParams, structured
+        convo, config, toolDecls.length ? toolDecls : null, onChunk, signal, genParams, structured, onReasoning
       );
       console.info(`[工具循环] 第 ${round + 1} 轮，模型工具调用数：${toolCalls.length}`, toolCalls);
 

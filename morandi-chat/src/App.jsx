@@ -36,6 +36,48 @@ const CONFIG_KEY = "morandi-chat-config";
 const ACTIVE_KEY = "morandi-chat-active";
 const WORKBENCH_KEY = "morandi-chat-workbench";
 const PROMPTS_KEY = "morandi-chat-prompts";
+// 选择「仅本次会话保存 Key」时，apiKey 只放 sessionStorage，不进 localStorage
+const SESSION_KEYS_KEY = "morandi-chat-session-keys";
+
+function loadSessionKeys() {
+  try {
+    return JSON.parse(sessionStorage.getItem(SESSION_KEYS_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSessionKey(profileId, apiKey) {
+  const all = loadSessionKeys();
+  if (apiKey) all[profileId] = apiKey;
+  else delete all[profileId];
+  sessionStorage.setItem(SESSION_KEYS_KEY, JSON.stringify(all));
+}
+
+/** localStorage 写入；配额满时返回 false，其它错误仍抛出 */
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (err) {
+    const quota =
+      err?.name === "QuotaExceededError" ||
+      err?.code === 22 ||
+      err?.code === 1014;
+    if (quota) return false;
+    throw err;
+  }
+}
+
+/** 持久化用的配置：会话级 Key 写成空串，避免明文落盘 */
+function configForStorage(config) {
+  return {
+    ...config,
+    profiles: config.profiles.map((p) =>
+      p.persistKey === false ? { ...p, apiKey: "" } : p
+    ),
+  };
+}
 
 // 工作台默认配置：temperature 0.7 为多数模型的常用值；maxTokens 0 = 不限
 const DEFAULT_WORKBENCH = {
@@ -51,19 +93,26 @@ const DEFAULT_WORKBENCH = {
 // 旧版默认模型已下线：读取本地保存的配置时自动迁移到 kimi-k3
 const LEGACY_MODELS = ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"];
 
-// 配置结构：{ profiles: [{id, provider, baseURL, apiKey, model}], activeId }
+// 配置结构：{ profiles: [{id, provider, baseURL, apiKey, model, persistKey}], activeId }
 function loadConfig() {
   const stored = loadJSON(CONFIG_KEY, null);
+  const sessionKeys = loadSessionKeys();
 
   // 已是多档案结构
   if (stored && Array.isArray(stored.profiles) && stored.profiles.length) {
-    const profiles = stored.profiles.map((p) => ({
-      id: p.id || newProfileId(),
-      provider: p.provider || detectProvider(p.baseURL),
-      baseURL: p.baseURL || "",
-      apiKey: p.apiKey || "",
-      model: LEGACY_MODELS.includes(p.model) ? "kimi-k3" : p.model || "",
-    }));
+    const profiles = stored.profiles.map((p) => {
+      const persistKey = p.persistKey !== false;
+      const id = p.id || newProfileId();
+      return {
+        id,
+        provider: p.provider || detectProvider(p.baseURL),
+        baseURL: p.baseURL || "",
+        // 会话级 Key：优先读 sessionStorage；持久化 Key：读 localStorage
+        apiKey: persistKey ? p.apiKey || "" : sessionKeys[id] || "",
+        model: LEGACY_MODELS.includes(p.model) ? "kimi-k3" : p.model || "",
+        persistKey,
+      };
+    });
     const activeId = profiles.some((p) => p.id === stored.activeId) ? stored.activeId : profiles[0].id;
     return { profiles, activeId };
   }
@@ -79,6 +128,7 @@ function loadConfig() {
     baseURL: legacy.baseURL || PROVIDERS[provider].baseURL,
     apiKey: legacy.apiKey || "",
     model,
+    persistKey: true,
   };
   return { profiles: [profile], activeId: profile.id };
 }
@@ -143,17 +193,6 @@ function visibleChain(tree) {
   return chain;
 }
 
-// 按 id 在整棵树（含所有分支）里找节点
-function findNodeById(tree, id) {
-  if (!tree) return null;
-  if (tree.id === id) return tree;
-  for (const child of tree.children || []) {
-    const hit = findNodeById(child, id);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 // 收集树上所有 user 节点的 id（删除对话时联动清理附件内容）
 function collectUserNodeIds(tree) {
   const ids = [];
@@ -210,12 +249,14 @@ export default function App() {
   const [pendingConfirms, setPendingConfirms] = useState({});
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
   const [todoBadge, setTodoBadge] = useState(0); // 侧边栏待办入口的未完成角标
+  const [storageError, setStorageError] = useState(null); // localStorage 配额等
   // 附件内容（多模态 parts / 文档抽取文本）：按 user 节点 id 保存，
   // 树里只留元信息；重试、换回答、后续轮次都从这里取回原始附件。
   const attachmentsRef = useRef(new Map());
   // 流式输出文本：独立于对话树，token 只写这里，树在开始 / 工具步骤 / 结束时才写回，
   // 避免每个 token 深拷贝整棵树并触发全量重渲染。
-  const liveRef = useRef(null); // { convId, nodeId, text }
+  // reasoning 是思考过程（Kimi K3 / reasoner），与正文分开累积，供「思考中」折叠块实时展示。
+  const liveRef = useRef(null); // { convId, nodeId, text, reasoning }
   const liveTimerRef = useRef(0);
   const [liveStream, setLiveStream] = useState(null); // 渲染用快照
 
@@ -261,14 +302,19 @@ export default function App() {
   // 页面关闭/切后台时立即落盘，避免丢尾部更新
   const convRef = useRef(conversations);
   convRef.current = conversations;
+  const persistConversations = (data) => {
+    if (!safeSetItem(STORAGE_KEY, JSON.stringify(data))) {
+      setStorageError("本地存储已满，对话可能无法保存。请删除旧对话或导出后清理。");
+    } else {
+      setStorageError(null);
+    }
+  };
   useEffect(() => {
-    const t = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(convRef.current));
-    }, 400);
+    const t = setTimeout(() => persistConversations(convRef.current), 400);
     return () => clearTimeout(t);
   }, [conversations]);
   useEffect(() => {
-    const flush = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(convRef.current));
+    const flush = () => safeSetItem(STORAGE_KEY, JSON.stringify(convRef.current));
     window.addEventListener("beforeunload", flush);
     document.addEventListener("visibilitychange", flush);
     return () => {
@@ -282,19 +328,26 @@ export default function App() {
     const valid = conversations.some((c) => c.id === activeId);
     const next = valid ? activeId : null;
     if (next !== activeId) setActiveId(next);
-    localStorage.setItem(ACTIVE_KEY, JSON.stringify(next));
+    safeSetItem(ACTIVE_KEY, JSON.stringify(next));
   }, [activeId, conversations]);
 
   useEffect(() => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    // 会话级 Key 单独写入 sessionStorage；localStorage 里对应字段为空
+    for (const p of config.profiles) {
+      if (p.persistKey === false) writeSessionKey(p.id, p.apiKey);
+      else writeSessionKey(p.id, ""); // 改为持久化时清掉会话副本
+    }
+    if (!safeSetItem(CONFIG_KEY, JSON.stringify(configForStorage(config)))) {
+      setStorageError("本地存储已满，服务商配置可能无法保存。");
+    }
   }, [config]);
 
   // 工作台配置 / 提示词模板（低频写入，直接持久化即可）
   useEffect(() => {
-    localStorage.setItem(WORKBENCH_KEY, JSON.stringify(workbench));
+    safeSetItem(WORKBENCH_KEY, JSON.stringify(workbench));
   }, [workbench]);
   useEffect(() => {
-    localStorage.setItem(PROMPTS_KEY, JSON.stringify(promptLib));
+    safeSetItem(PROMPTS_KEY, JSON.stringify(promptLib));
   }, [promptLib]);
   // 自定义工具库（低频写入，直接持久化）
   useEffect(() => {
@@ -413,7 +466,7 @@ export default function App() {
 
   // 开始一次流式输出（baseText 用于「继续生成」时接在已有内容之后）
   const beginLiveStream = (convId, nodeId, baseText = "") => {
-    liveRef.current = { convId, nodeId, text: baseText };
+    liveRef.current = { convId, nodeId, text: baseText, reasoning: "" };
     flushLive();
   };
 
@@ -428,16 +481,29 @@ export default function App() {
     }, 60);
   };
 
-  // 结束流式并取回最终文本（正常结束、停止、出错都要调用）
+  // 追加思考过程 token：与正文共用同一节流定时器
+  const appendLiveReasoning = (chunk) => {
+    if (!liveRef.current) return;
+    liveRef.current.reasoning += chunk;
+    if (liveTimerRef.current) return;
+    liveTimerRef.current = setTimeout(() => {
+      liveTimerRef.current = 0;
+      flushLive();
+    }, 60);
+  };
+
+  // 结束流式并取回最终文本与思考过程（正常结束、停止、出错都要调用）
   const endLiveStream = () => {
     if (liveTimerRef.current) {
       clearTimeout(liveTimerRef.current);
       liveTimerRef.current = 0;
     }
-    const text = liveRef.current?.text ?? "";
+    const snapshot = liveRef.current;
+    const text = snapshot?.text ?? "";
+    const reasoning = snapshot?.reasoning ?? "";
     liveRef.current = null;
     flushLive();
-    return text;
+    return { text, reasoning };
   };
 
   // 树更新：克隆当前树 → 在 updater 中原地修改 → 写回
@@ -509,12 +575,10 @@ export default function App() {
     });
   };
 
-  // 手动重新尝试某个失败的工具步骤：复用原工具与参数
-  // 注意：重跑只更新这一行的结果，不会自动改写模型已有的回答；
-  // 需要模型基于新结果重新作答时，用界面上的「用新结果重新回答」（reanswerWithStep）显式触发。
+  // 手动重新尝试某个失败的工具步骤：复用原工具与参数；成功后把新结果回灌模型，自动在同一条回复上继续生成
   const retryToolStep = async (callId) => {
     const conv = conversations.find((c) => c.id === activeId);
-    if (!conv) return;
+    if (!conv || isStreaming) return;
     const chain = visibleChain(conv.tree);
     const node = chain[chain.length - 1]?.node;
     const step = node?.toolSteps?.find((s) => s.id === callId);
@@ -550,8 +614,7 @@ export default function App() {
           s.status = isError ? "error" : "done";
           s.result = String(resultStr).slice(0, 120);
           s.canRetry = isError;
-          // 成功的手动重跑：标记出来，界面会提示「仅本地重跑」并给出重新回答入口
-          s.manualRetry = !isError;
+          s.manualRetry = false;
         }
       });
       if (String(resultStr).length > 120) {
@@ -570,6 +633,10 @@ export default function App() {
           n.sources = Array.from(map.values());
         });
       }
+      // 成功：把新工具结果回灌模型，在同一条 assistant 气泡上继续生成
+      if (!isError) {
+        await continueAfterToolRetry(conv.id, step.name, String(resultStr));
+      }
     } catch (err) {
       if (err?.name === "AbortError") return;
       updateLastVisible(conv.id, (n) => {
@@ -584,61 +651,58 @@ export default function App() {
     }
   };
 
-  // 手动重跑成功后，让模型拿着新结果重新回答一次：
-  // 新回答挂成同一个提问的另一个版本（旧回答保留可切换），工具步骤一并带过去
-  const reanswerWithStep = async (callId) => {
-    if (!activeConv || isStreaming) return;
-    const chain = visibleChain(activeConv.tree);
-    const current = chain[chain.length - 1]?.node;
-    const step = current?.toolSteps?.find((s) => s.id === callId);
-    if (!step || step.status !== "done") return;
-    const fresh = fullResultsRef.current.get(callId) || step.result || "";
-    let userEntry = null;
-    for (let i = chain.length - 2; i >= 0; i--) {
-      if (chain[i].node.role === "user") { userEntry = chain[i]; break; }
-    }
-    if (!userEntry) return;
+  // 工具手动重试成功后：用 system 注入最新结果，让模型基于新结果在同一条 assistant 气泡上续写/修正。
+  // 不同于「换一个回答」挂新版本，这里是接续现有回答（旧内容保留、新 token 追加）。
+  const continueAfterToolRetry = async (convId, toolName, resultStr) => {
+    if (isStreaming) return;
+    const conv = conversations.find((c) => c.id === convId);
+    if (!conv?.tree || !activeConfig.apiKey) return;
 
-    const convId = activeConv.id;
-    const aiId = uid();
-    setConvTree(convId, (tree) => {
-      const target = findNodeById(tree, userEntry.node.id);
-      if (!target) return;
-      const copy = makeNode("assistant", "", {
-        id: aiId,
-        streaming: true,
-        hint: "",
-        // 工具步骤跟着新版本走，但不再提示「重新回答」，避免反复触发
-        toolSteps: (current.toolSteps || []).map((s) => ({ ...s, manualRetry: false })),
-      });
-      target.children.push(copy);
-      target.active = target.children.length - 1;
+    const chain = visibleChain(conv.tree);
+    const last = chain[chain.length - 1]?.node;
+    if (!last || last.role !== "assistant") return;
+
+    updateLastVisible(convId, (node) => {
+      node.streaming = true;
+      node.stopped = false;
+      node.hint = "正在根据新的工具结果继续…";
     });
-
-    const baseNodes = chain.slice(0, chain.indexOf(userEntry) + 1).map((e) => e.node);
-    const systemMessages = [
-      ...customSystemMessages(),
-      buildTimeMessage(),
-      ...attachmentSystemMessages(baseNodes, attachmentsRef.current),
-      {
-        role: "system",
-        content:
-          `工具「${step.name}」此前执行失败，用户已手动重新执行并成功。` +
-          "请忽略之前关于该工具失败的说明，基于下面的最新结果重新回答用户的问题。\n\n" +
-          `工具参数：${step.argsRaw || "{}"}\n\n工具结果：\n${String(fresh).slice(0, 20000)}`,
-      },
-    ];
-
-    beginLiveStream(convId, aiId, "");
     setIsStreaming(true);
+    // 已有内容作为基线，新 token 接在后面
+    beginLiveStream(convId, last.id, String(last.content || ""));
+
     const controller = new AbortController();
     abortRef.current = controller;
     userStoppedRef.current = false;
-    let statusCleared = false;
+
+    // 历史 = 已有对话（含已生成的不完整 AI 回答），让模型接着续写；带附件
+    const history = buildHistoryMessages(
+      chain
+        .map((e) => e.node)
+        .filter(
+          (m) =>
+            (m.role === "user" || m.role === "assistant") &&
+            m.content &&
+            !String(m.content).startsWith("⚠️")
+        ),
+      attachmentsRef.current
+    );
+
+    const boost = {
+      role: "system",
+      content:
+        `用户手动重新执行了工具「${toolName}」，最新结果如下。请基于此结果继续或修正回答，不要编造工具返回内容。\n\n` +
+        String(resultStr).slice(0, 12000),
+    };
 
     await streamChat({
-      messages: buildHistoryMessages(baseNodes, attachmentsRef.current),
-      systemMessages,
+      messages: history,
+      systemMessages: [
+        ...customSystemMessages(),
+        buildTimeMessage(),
+        boost,
+        ...attachmentSystemMessages(chain.map((e) => e.node), attachmentsRef.current),
+      ],
       config: activeConfig,
       webSearch: false,
       customTools: toolLib.filter((t) => t.enabled),
@@ -647,47 +711,7 @@ export default function App() {
       schemaText: workbench.schemaText,
       genParams: buildGenParams(),
       signal: controller.signal,
-      onChunk: (chunk) => {
-        appendLiveStream(chunk);
-        if (!statusCleared) {
-          statusCleared = true;
-          updateLastVisible(convId, (node) => {
-            node.searching = false;
-            node.hint = "";
-          });
-        }
-      },
-      onToolStep: toolStepHandler(convId),
-      onToolConfirm: toolConfirmHandler,
-      onDone: (usage) => {
-        const stopped = consumeStopFlag(userStoppedRef);
-        const finalText = endLiveStream();
-        updateLastVisible(convId, (node) => {
-          node.content = finalText;
-          node.streaming = false;
-          node.searching = false;
-          node.hint = "";
-          node.stopped = stopped;
-          finalizeToolSteps(node.toolSteps, stopped);
-          if (usage) node.usage = usage;
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
-      onError: (err) => {
-        consumeStopFlag(userStoppedRef);
-        endLiveStream();
-        updateLastVisible(convId, (node) => {
-          node.content = `⚠️ ${err.message}`;
-          node.streaming = false;
-          node.searching = false;
-          node.hint = "";
-          node.stopped = false;
-          failToolSteps(node.toolSteps);
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
+      ...makeStreamCallbacks(convId, { clearStatus: false, appendTextOnError: true }),
     });
   };
 
@@ -727,6 +751,61 @@ export default function App() {
       };
       shift(tree);
     });
+  };
+
+  // 组装一次 streamChat 的标准回调（onChunk/onReasoning/onToolStep/onToolConfirm/onDone/onError）。
+  // 发送 / 继续生成 / 工具重试回灌 三类请求共用，差异通过 opts 注入，避免四份样板复制后各自漂移。
+  const makeStreamCallbacks = (convId, opts = {}) => {
+    const { onStatus, onSources, onDoneExtra, clearStatus = true, appendTextOnError = false } = opts;
+    let statusCleared = false;
+    return {
+      onChunk: (chunk) => {
+        appendLiveStream(chunk);
+        if (clearStatus && !statusCleared) {
+          statusCleared = true;
+          updateLastVisible(convId, (node) => {
+            node.searching = false;
+            node.hint = "";
+          });
+        }
+      },
+      onReasoning: appendLiveReasoning,
+      onStatus,
+      onSources,
+      onToolStep: toolStepHandler(convId),
+      onToolConfirm: toolConfirmHandler,
+      onDone: (usage) => {
+        const stopped = consumeStopFlag(userStoppedRef);
+        const { text, reasoning } = endLiveStream();
+        updateLastVisible(convId, (node) => {
+          onDoneExtra && onDoneExtra(node, text);
+          node.content = text;
+          if (reasoning) node.reasoning = reasoning;
+          node.streaming = false;
+          node.searching = false;
+          node.hint = "";
+          node.stopped = stopped;
+          finalizeToolSteps(node.toolSteps, stopped);
+          if (usage) node.usage = usage;
+        });
+        setIsStreaming(false);
+        abortRef.current = null;
+      },
+      onError: (err) => {
+        consumeStopFlag(userStoppedRef);
+        const { text, reasoning } = endLiveStream();
+        updateLastVisible(convId, (node) => {
+          node.content = appendTextOnError && text ? `${text}\n\n⚠️ ${err.message}` : `⚠️ ${err.message}`;
+          if (reasoning) node.reasoning = reasoning;
+          node.streaming = false;
+          node.stopped = false;
+          node.hint = "";
+          failToolSteps(node.toolSteps);
+        });
+        setIsStreaming(false);
+        abortRef.current = null;
+      },
+    };
   };
 
   const handleSend = async (text, options = {}) => {
@@ -945,7 +1024,6 @@ export default function App() {
 
     // 流式文本写进独立的 liveStream：token 不再触发对话树更新与全量重渲染
     beginLiveStream(convId, liveNodeId, "");
-    let liveStatusCleared = false;
 
     await streamChat({
       messages: history,
@@ -967,42 +1045,24 @@ export default function App() {
       schemaText: workbench.schemaText,
       genParams: buildGenParams(),
       signal: controller.signal,
-      onChunk: (chunk) => {
-        // 流式期间只更新独立文本，不碰对话树；首个 token 到达时清一次「思考中」提示
-        appendLiveStream(chunk);
-        if (!liveStatusCleared) {
-          liveStatusCleared = true;
+      ...makeStreamCallbacks(convId, {
+        onStatus: (status, toolName) => {
+          if (status === "searching" || status === "tool") {
+            updateLastVisible(convId, (node) => {
+              node.searching = true;
+              node.toolName = status === "tool" ? toolName : "";
+              node.hint = "";
+            });
+          }
+        },
+        onSources: (sources) => {
           updateLastVisible(convId, (node) => {
-            node.searching = false;
-            node.hint = "";
+            const existing = node.sources || [];
+            const seen = new Set(existing.map((s) => s.url));
+            node.sources = [...existing, ...sources.filter((s) => !seen.has(s.url))];
           });
-        }
-      },
-      onStatus: (status, toolName) => {
-        if (status === "searching" || status === "tool") {
-          updateLastVisible(convId, (node) => {
-            node.searching = true;
-            node.toolName = status === "tool" ? toolName : "";
-            node.hint = "";
-          });
-        }
-      },
-      // Agent 工具执行进度：start 追加一步（running），result 回填结果与状态
-      onToolStep: toolStepHandler(convId),
-      onToolConfirm: toolConfirmHandler,
-      onSources: (sources) => {
-        updateLastVisible(convId, (node) => {
-          const existing = node.sources || [];
-          const seen = new Set(existing.map((s) => s.url));
-          node.sources = [...existing, ...sources.filter((s) => !seen.has(s.url))];
-        });
-      },
-      onDone: (usage) => {
-        // 消费并重置停止标记（用户中止时 chat.js 走 onDone 而非 onError）
-        const stopped = consumeStopFlag(userStoppedRef);
-        // 取回流式文本：最终内容只写回对话树一次
-        const finalText = endLiveStream();
-        updateLastVisible(convId, (node) => {
+        },
+        onDoneExtra: (node, finalText) => {
           // 联网搜索开启但 fiber 未返回来源时，从最终回答的 Markdown 链接中提取
           if (useWebSearch && !(node.sources?.length) && finalText) {
             const mdLinkRe = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
@@ -1013,33 +1073,8 @@ export default function App() {
             }
             if (extracted.length) node.sources = extracted;
           }
-          node.content = finalText;
-          node.streaming = false;
-          node.searching = false;
-          node.hint = "";
-          node.stopped = stopped;
-          // 收口未决工具步骤：停止→stopped，正常完成→done，等待确认→rejected
-          finalizeToolSteps(node.toolSteps, stopped);
-          if (usage) node.usage = usage;
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
-      onError: (err) => {
-        // 与 onDone 互斥；同样消费标记，防止任何异常路径下残留污染下一次请求
-        consumeStopFlag(userStoppedRef);
-        endLiveStream();
-        updateLastVisible(convId, (node) => {
-          node.content = `⚠️ ${err.message}`;
-          node.streaming = false;
-          node.searching = false;
-          node.hint = "";
-          node.stopped = false;
-          failToolSteps(node.toolSteps);
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
+        },
+      }),
     });
   };
 
@@ -1063,7 +1098,6 @@ export default function App() {
     const lastEntry = chain[chain.length - 1];
     const last = lastEntry?.node;
     if (!last || last.role !== "assistant" || !last.stopped) return;
-    let liveStatusCleared = false;
 
     // 思考阶段停止（无内容）→ 复用原气泡重新请求，不产生新消息
     if (!last.content) {
@@ -1109,47 +1143,7 @@ export default function App() {
         schemaText: workbench.schemaText,
         genParams: buildGenParams(),
         signal: controller.signal,
-        onChunk: (chunk) => {
-          appendLiveStream(chunk);
-          if (!liveStatusCleared) {
-            liveStatusCleared = true;
-            updateLastVisible(convId, (node) => {
-              node.searching = false;
-              node.hint = "";
-            });
-          }
-        },
-        onToolStep: toolStepHandler(convId),
-        onToolConfirm: toolConfirmHandler,
-        onDone: (usage) => {
-          // 消费并重置停止标记（与普通发送路径一致，避免残留污染下一次请求）
-          const stopped = consumeStopFlag(userStoppedRef);
-          const finalText = endLiveStream();
-          updateLastVisible(convId, (node) => {
-            node.content = finalText;
-            node.streaming = false;
-            node.searching = false;
-            node.hint = "";
-            node.stopped = stopped;
-            finalizeToolSteps(node.toolSteps, stopped);
-            if (usage) node.usage = usage;
-          });
-          setIsStreaming(false);
-          abortRef.current = null;
-        },
-        onError: (err) => {
-          consumeStopFlag(userStoppedRef);
-          endLiveStream();
-          updateLastVisible(convId, (node) => {
-            node.content = `⚠️ ${err.message}`;
-            node.streaming = false;
-            node.stopped = false;
-            node.hint = "";
-            failToolSteps(node.toolSteps);
-          });
-          setIsStreaming(false);
-          abortRef.current = null;
-        },
+        ...makeStreamCallbacks(convId, {}),
       });
       return;
     }
@@ -1196,40 +1190,7 @@ export default function App() {
       nativeToolSettings,
       genParams: buildGenParams(),
       signal: controller.signal,
-      onChunk: (chunk) => {
-        appendLiveStream(chunk);
-      },
-      onToolStep: toolStepHandler(convId),
-      onToolConfirm: toolConfirmHandler,
-      onDone: (usage) => {
-        // 修复：继续生成后用户点了停止时，必须保留 stopped=true（“继续生成”入口仍在），
-        // 并消费重置标记，否则下一次普通发送会被残留标记误标为已停止
-        const stopped = consumeStopFlag(userStoppedRef);
-        const finalText = endLiveStream();
-        updateLastVisible(convId, (node) => {
-          node.content = finalText;
-          node.streaming = false;
-          node.stopped = stopped;
-          node.hint = "";
-          finalizeToolSteps(node.toolSteps, stopped);
-          if (usage) node.usage = usage;
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
-      onError: (err) => {
-        consumeStopFlag(userStoppedRef);
-        const finalText = endLiveStream();
-        updateLastVisible(convId, (node) => {
-          node.content = `${finalText}\n\n⚠️ ${err.message}`;
-          node.streaming = false;
-          node.stopped = false;
-          node.hint = "";
-          failToolSteps(node.toolSteps);
-        });
-        setIsStreaming(false);
-        abortRef.current = null;
-      },
+      ...makeStreamCallbacks(convId, { clearStatus: false, appendTextOnError: true }),
     });
   };
 
@@ -1333,7 +1294,6 @@ export default function App() {
         pendingConfirms={pendingConfirms}
         onRespondToolConfirm={respondToolConfirm}
         onRetryTool={retryToolStep}
-        onReAnswer={reanswerWithStep}
         fullResultsMap={fullResultsRef.current}
         // fullResultsVersion 仅用于在 mount 加载完后触发 App 重新渲染，
         // 让子组件（ChatArea→MessageBubble→ResultDisplay）顺带重读 Map 内的最新全文
@@ -1371,6 +1331,21 @@ export default function App() {
           saveNativeToolSettings(next);
         }}
       />
+      {storageError && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-ink/90 text-cream text-sm shadow-float max-w-[90vw]">
+          <span>{storageError}</span>
+          <button
+            onClick={() => setStorageError(null)}
+            className="text-cream/70 hover:text-cream shrink-0"
+            title="关闭"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                 strokeLinecap="round" className="w-4 h-4">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
