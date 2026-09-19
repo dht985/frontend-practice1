@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import App from "../App";
+import { _resetConversationDB, clearConversationData } from "../api/conversationStore";
 
 const CONFIG_KEY = "morandi-chat-config";
 const WORKBENCH_KEY = "morandi-chat-workbench";
@@ -89,7 +90,7 @@ async function sendMessage(text) {
   fireEvent.keyDown(textarea, { key: "Enter" });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // jsdom 没实现的浏览器 API：按需垫平
   Element.prototype.scrollIntoView = vi.fn();
   URL.createObjectURL = vi.fn(() => "blob:mock");
@@ -97,6 +98,9 @@ beforeEach(() => {
 
   localStorage.clear();
   sessionStorage.clear();
+  // 对话现在存在 IndexedDB 里，测试之间要清干净，避免上一轮的数据串进来
+  _resetConversationDB();
+  await clearConversationData();
   localStorage.setItem(
     CONFIG_KEY,
     JSON.stringify({

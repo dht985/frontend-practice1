@@ -9,6 +9,7 @@ import { loadToolLib, saveToolLib, runLocalTool } from "./api/tools";
 import { isNativeTool, runNativeTool, loadNativeToolSettings, saveNativeToolSettings, getEnabledNativeDecls } from "./api/nativeTools";
 import { todoList, onTodosChange } from "./api/todos";
 import TodoPanel from "./components/TodoPanel";
+import useConversationPersistence from "./hooks/useConversationPersistence";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 import {
   loadAllFullResults,
@@ -37,7 +38,6 @@ import {
   trimNodesToBudget,
 } from "./api/contextBudget";
 
-const STORAGE_KEY = "morandi-chat-conversations";
 const CONFIG_KEY = "morandi-chat-config";
 const ACTIVE_KEY = "morandi-chat-active";
 const WORKBENCH_KEY = "morandi-chat-workbench";
@@ -229,7 +229,9 @@ function migrateConv(c) {
 }
 
 export default function App() {
-  const [conversations, setConversations] = useState(() => loadJSON(STORAGE_KEY, []).map(migrateConv));
+  // 对话数据从 IndexedDB 读取（含从 localStorage 的一次性迁移），
+  // 之后按单条记录增量写回；见 hooks/useConversationPersistence
+  const { conversations, setConversations } = useConversationPersistence({ migrateConv });
   const [activeId, setActiveId] = useState(() => loadJSON(ACTIVE_KEY, null));
   const [isStreaming, setIsStreaming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -307,30 +309,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // 对话持久化：流式期间每个 token 都全量序列化+写盘会越来越卡，改为 400ms 防抖；
-  // 页面关闭/切后台时立即落盘，避免丢尾部更新
-  const convRef = useRef(conversations);
-  convRef.current = conversations;
-  const persistConversations = (data) => {
-    if (!safeSetItem(STORAGE_KEY, JSON.stringify(data))) {
-      setStorageError("本地存储已满，对话可能无法保存。请删除旧对话或导出后清理。");
-    } else {
-      setStorageError(null);
-    }
-  };
-  useEffect(() => {
-    const t = setTimeout(() => persistConversations(convRef.current), 400);
-    return () => clearTimeout(t);
-  }, [conversations]);
-  useEffect(() => {
-    const flush = () => safeSetItem(STORAGE_KEY, JSON.stringify(convRef.current));
-    window.addEventListener("beforeunload", flush);
-    document.addEventListener("visibilitychange", flush);
-    return () => {
-      window.removeEventListener("beforeunload", flush);
-      document.removeEventListener("visibilitychange", flush);
-    };
-  }, []);
+  // 对话持久化已迁到 IndexedDB，见 hooks/useConversationPersistence
 
   // 记住上次打开的对话；若该对话已不存在则回退为空
   useEffect(() => {

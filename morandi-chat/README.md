@@ -17,7 +17,8 @@
 - **工作台面板**：system prompt、temperature/top-p/max tokens/stop、JSON 模式、提示词模板
 - **上下文预算**：发送前估算 token，超出窗口时自动省略最早的整轮对话（含附件），
   并在输入框上方说明省略了多少；窗口大小可在工作台里设置（默认 128k）
-- **本地持久化**：对话存 localStorage，工具调用全文与附件内容存 IndexedDB（刷新不丢）
+- **本地持久化**：对话、工具调用全文、附件内容都存在 IndexedDB（带 schema 版本，
+  旧版 localStorage 数据首次启动自动迁移；刷新与重开都不丢）
 
 ## 快速开始
 
@@ -113,7 +114,10 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 | `responseFormat` | 结构化输出（JSON Mode） |
 
 档案存在 localStorage 的 `morandi-chat-config`，结构是 `{ profiles: [...], activeId }`；
-旧版单档案配置会在启动时自动迁移。其余键：`morandi-chat-conversations`（对话树）、
+旧版单档案配置会在启动时自动迁移。**对话数据存在 IndexedDB**（库 `morandi-chat` 的
+`conversations` store，每个对话一条记录，schema 版本由 `src/api/db.js` 统一维护；
+首次启动会把旧的 `morandi-chat-conversations` 自动导入并清理）。
+其余 localStorage 键：
 `morandi-chat-active`（当前对话）、`morandi-chat-workbench`（生成参数）、
 `morandi-chat-prompts`（提示词模板）、`morandi-chat-tools`（自定义工具）、
 `morandi-chat-native-tools`（内置工具开关）、`morandi-chat-todos`（待办）。
@@ -160,7 +164,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-14 个测试文件、272 个用例（含整链路与 Worker 测试）：
+15 个测试文件、284 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -176,6 +180,7 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/components/__tests__/MessageBubble.test.jsx` | 消息气泡渲染：正文、思考块、JSON、工具步骤（@testing-library） |
 | `src/api/__tests__/providers.test.js` | 生成参数能力：推理模型（kimi-k3 变体 / reasoner / o 系列）不发送采样参数 |
 | `src/api/__tests__/contextBudget.test.js` | 上下文预算：中英文与多模态/附件的 token 估算、按预算整轮裁剪、最后一轮永远保留 |
+| `src/api/__tests__/conversationStore.test.js` | 对话数据层：单条读写/排序/删除、schema 版本、从 localStorage 迁移与回滚备份 |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 | `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
@@ -195,6 +200,8 @@ morandi-chat/
 │  │  ├─ files.js          # 附件按能力分流处理
 │  │  ├─ fetcher.js        # fetch_url 的传输层与正文提取
 │  │  ├─ urlSafety.js      # 浏览器端抓取 URL 预校验（localhost/私网/元数据）
+│  │  ├─ db.js             # IndexedDB 统一入口与 schema 版本（conversations / fullResults / meta）
+│  │  ├─ conversationStore.js # 对话持久化（每条对话一条记录）
 │  │  ├─ history.js        # 对话树 → 请求消息（含附件回灌）
 │  │  ├─ attachmentStore.js# 附件内容 IndexedDB 持久化
 │  │  ├─ fullResultsStore.js# 工具结果全文持久化
