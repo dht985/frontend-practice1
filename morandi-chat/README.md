@@ -131,7 +131,9 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 npm test
 ```
 
-12 个测试文件、255 个用例：
+GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
+
+13 个测试文件、260 个用例（含整链路测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -147,6 +149,7 @@ npm test
 | `src/components/__tests__/MessageBubble.test.jsx` | 消息气泡渲染：正文、思考块、JSON、工具步骤（@testing-library） |
 | `src/api/__tests__/providers.test.js` | 生成参数能力：推理模型（kimi-k3 变体 / reasoner / o 系列）不发送采样参数 |
 | `src/api/__tests__/contextBudget.test.js` | 上下文预算：中英文与多模态/附件的 token 估算、按预算整轮裁剪、最后一轮永远保留 |
+| `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 
 ## 项目结构
 

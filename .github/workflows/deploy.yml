@@ -31,6 +31,10 @@ jobs:
         working-directory: ./morandi-chat
         run: npm ci
 
+      - name: Run unit & integration tests for Morandi Chat
+        working-directory: ./morandi-chat
+        run: npm test
+
       - name: Build Morandi Chat
         working-directory: ./morandi-chat
         run: npm run build
