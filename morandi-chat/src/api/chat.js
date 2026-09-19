@@ -220,6 +220,7 @@ export async function streamChat({
   signal,
   onChunk,
   onReasoning,
+  onRound,
   onStatus,
   onSources,
   onToolStep,
@@ -286,6 +287,13 @@ export async function streamChat({
       const { content, toolCalls, usage } = await streamOnce(
         convo, config, toolDecls.length ? toolDecls : null, onChunk, signal, genParams, structured, onReasoning
       );
+      onRound &&
+        onRound({
+          round: round + 1,
+          toolCalls: toolCalls.length,
+          contentLength: content.length,
+          usage: usage || null,
+        });
       console.info(`[工具循环] 第 ${round + 1} 轮，模型工具调用数：${toolCalls.length}`, toolCalls);
 
       // 没有工具调用 → 这一轮就是最终回答

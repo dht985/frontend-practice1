@@ -17,6 +17,8 @@
 - **工作台面板**：system prompt、temperature/top-p/max tokens/stop、JSON 模式、提示词模板
 - **上下文预算**：发送前估算 token，超出窗口时自动省略最早的整轮对话（含附件），
   并在输入框上方说明省略了多少；窗口大小可在工作台里设置（默认 128k）
+- **诊断日志**：每次请求记录轮次、工具调用、耗时与错误（只在内存里、不含对话正文），
+  工作台底部可一键导出 JSON，出问题时能自己查
 - **本地持久化**：对话、工具调用全文、附件内容都存在 IndexedDB（带 schema 版本，
   旧版 localStorage 数据首次启动自动迁移；刷新与重开都不丢）
 
@@ -156,6 +158,16 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 - 代理不转发 Cookie，只抓取公开页面，超时 15 秒，响应体最多读 2MB。
 - 自定义工具代码在前端执行，等同你自己运行的脚本权限。
 
+## 诊断与排查
+
+工作台面板底部有「诊断日志」：每次请求会记一条记录，包含服务商/模型、每轮的
+工具调用数、工具执行阶段、联网来源数量、用量与错误信息，以及总耗时。
+
+- **只在内存里**：不写磁盘、不上传，刷新页面即清空（最多保留最近 30 次请求）
+- **不含对话正文**：只记长度与状态，导出前可以自己打开检查
+- 出现「明明该成功却失败了」「工具没执行」这类问题时，导出这份 JSON 就能定位
+  （写这版代码时它已经帮我抓到过一次 `onStatus is not defined` 的真实回归）
+
 ## 测试
 
 ```bash
@@ -164,7 +176,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-17 个测试文件、304 个用例（含整链路与 Worker 测试）：
+18 个测试文件、315 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -183,6 +195,7 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/api/__tests__/conversationStore.test.js` | 对话数据层：单条读写/排序/删除、schema 版本、从 localStorage 迁移与回滚备份 |
 | `src/state/__tests__/conversationTree.test.js` | 对话树纯逻辑：可见路径与多版本分支、查找遍历、旧结构迁移 |
 | `src/state/__tests__/liveStreamBuffer.test.js` | 流式缓冲：token 节流合并、正文与思考过程分离、结束与清理 |
+| `src/api/__tests__/sessionTrace.test.js` | 诊断日志：步骤记录、容量上限、导出、订阅与隐私（不记正文） |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 | `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
@@ -209,6 +222,7 @@ morandi-chat/
 │  │  ├─ fullResultsStore.js# 工具结果全文持久化
 │  │  ├─ tools.js          # 自定义工具编译/执行
 │  │  ├─ nativeTools.js    # 内置工具（fetch_url / todo_list）
+│  │  ├─ sessionTrace.js   # 本地诊断日志（轮次/工具/耗时/错误，不含正文）
 │  │  └─ todos.js          # 待办存储
 │  ├─ hooks/               # useConversationStore（对话 store）、useLiveStream、useContextBudget
 │  ├─ state/               # 纯逻辑：conversationTree（对话树）、liveStreamBuffer（流式缓冲）

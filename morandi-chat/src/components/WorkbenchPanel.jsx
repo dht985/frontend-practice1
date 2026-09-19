@@ -1,5 +1,59 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { NATIVE_TOOL_DECLS } from "../api/nativeTools";
+import { clearTraces, exportTraces, subscribe as subscribeTraces, traceCount } from "../api/sessionTrace";
+
+// 诊断日志：本地会话 trace 的导出入口（只在内存里，不记正文）
+function DiagnosticsSection() {
+  const [count, setCount] = useState(traceCount());
+  useEffect(() => subscribeTraces(() => setCount(traceCount())), []);
+
+  const handleExport = () => {
+    const blob = new Blob([exportTraces()], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `morandi-trace-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="mt-4 pt-3 border-t border-line/60">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] text-ink font-medium">诊断日志</p>
+          <p className="text-[10px] text-muted/80 mt-0.5 leading-relaxed">
+            记录最近请求的轮次、工具调用、耗时与错误（当前 {count} 条）。
+            只存在内存里、不含对话正文，出问题时导出给我看即可。
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={!count}
+            className="text-[11px] text-ink/80 hover:text-ink px-2 py-1 rounded-lg border border-line
+                       hover:bg-sand transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            导出
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              clearTraces();
+              setCount(0);
+            }}
+            disabled={!count}
+            className="text-[11px] text-muted hover:text-ink px-2 py-1 rounded-lg border border-line
+                       hover:bg-sand transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            清空
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // 内置系统提示词模板（内置不可删）
 const BUILTIN_PROMPTS = [
@@ -610,6 +664,7 @@ export default function WorkbenchPanel({
             恢复默认
           </button>
         </div>
+        <DiagnosticsSection />
       </aside>
     </>
   );

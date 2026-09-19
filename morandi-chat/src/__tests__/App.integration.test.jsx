@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import App from "../App";
 import { _resetConversationDB, clearConversationData } from "../api/conversationStore";
+import { _resetTraces, listTraces } from "../api/sessionTrace";
 
 const CONFIG_KEY = "morandi-chat-config";
 const WORKBENCH_KEY = "morandi-chat-workbench";
@@ -101,6 +102,7 @@ beforeEach(async () => {
   // 对话现在存在 IndexedDB 里，测试之间要清干净，避免上一轮的数据串进来
   _resetConversationDB();
   await clearConversationData();
+  _resetTraces();
   localStorage.setItem(
     CONFIG_KEY,
     JSON.stringify({
@@ -204,5 +206,21 @@ describe("App 整链路", () => {
     expect(userTexts).toEqual(["第二个问题", "第三个问题"]);
     expect(lastRequest.at(-1).content).toBe("第三个问题");
     await waitFor(() => expect(screen.getByText(/省略了最早的 \d+ 轮对话/)).toBeTruthy());
+  });
+
+  it("每次请求都会留下一条本地诊断记录（只有元信息，不含正文）", async () => {
+    mockProvider(async () => textResponse("好的"));
+    render(<App />);
+
+    await sendMessage("记录一下这次请求");
+    await waitFor(() => expect(screen.getByText("好的")).toBeTruthy());
+
+    const traces = listTraces();
+    expect(traces).toHaveLength(1);
+    expect(traces[0].status).toBe("done");
+    expect(traces[0].meta.provider).toBe("kimi");
+    expect(traces[0].steps.some((s) => s.type === "round")).toBe(true);
+    expect(typeof traces[0].durationMs).toBe("number");
+    expect(traces[0].contentLength).toBe(2);
   });
 });

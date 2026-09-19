@@ -12,6 +12,7 @@ import TodoPanel from "./components/TodoPanel";
 import useConversationStore from "./hooks/useConversationStore";
 import useLiveStream from "./hooks/useLiveStream";
 import useContextBudget from "./hooks/useContextBudget";
+import { addStep, endTrace, startTrace } from "./api/sessionTrace";
 import { collectUserNodeIds, makeNode, migrateConv, uid, visibleChain } from "./state/conversationTree";
 import { PROVIDERS, getProvider, detectProvider, newProfileId, getParamCaps } from "./api/providers";
 import {
@@ -638,6 +639,13 @@ export default function App() {
   const makeStreamCallbacks = (convId, opts = {}) => {
     const { onStatus, onSources, onDoneExtra, clearStatus = true, appendTextOnError = false } = opts;
     let statusCleared = false;
+    // 每次请求记一条本地诊断（只在内存里，不记正文，见 api/sessionTrace.js）
+    const traceId = startTrace("chat-request", {
+      convId,
+      provider: activeConfig.provider,
+      model: activeConfig.model,
+    });
+    const tracedToolStep = toolStepHandler(convId);
     return {
       onChunk: (chunk) => {
         appendLiveStream(chunk);
@@ -650,9 +658,24 @@ export default function App() {
         }
       },
       onReasoning: appendLiveReasoning,
-      onStatus,
-      onSources,
-      onToolStep: toolStepHandler(convId),
+      onStatus: (status, toolName) => {
+        addStep(traceId, "status", { status, tool: toolName || "" });
+        onStatus && onStatus(status, toolName);
+      },
+      onSources: (sources) => {
+        addStep(traceId, "sources", { count: sources?.length || 0 });
+        onSources && onSources(sources);
+      },
+      onRound: (info) => addStep(traceId, "round", info),
+      onToolStep: (step) => {
+        addStep(traceId, "tool", {
+          phase: step.type,
+          name: step.name,
+          attempt: step.attempt,
+          error: step.error ? String(step.result || "").slice(0, 200) : undefined,
+        });
+        tracedToolStep(step);
+      },
       onToolConfirm: toolConfirmHandler,
       onDone: (usage) => {
         const stopped = consumeStopFlag(userStoppedRef);
@@ -668,6 +691,12 @@ export default function App() {
           finalizeToolSteps(node.toolSteps, stopped);
           if (usage) node.usage = usage;
         });
+        endTrace(traceId, {
+          status: stopped ? "stopped" : "done",
+          usage: usage || null,
+          contentLength: text.length,
+          reasoningLength: reasoning.length,
+        });
         setIsStreaming(false);
         abortRef.current = null;
       },
@@ -681,6 +710,11 @@ export default function App() {
           node.stopped = false;
           node.hint = "";
           failToolSteps(node.toolSteps);
+        });
+        endTrace(traceId, {
+          status: "error",
+          error: String(err?.message || err).slice(0, 300),
+          contentLength: text.length,
         });
         setIsStreaming(false);
         abortRef.current = null;
