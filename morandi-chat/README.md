@@ -176,7 +176,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-18 个测试文件、315 个用例（含整链路与 Worker 测试）：
+19 个测试文件、326 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -196,6 +196,7 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/state/__tests__/conversationTree.test.js` | 对话树纯逻辑：可见路径与多版本分支、查找遍历、旧结构迁移 |
 | `src/state/__tests__/liveStreamBuffer.test.js` | 流式缓冲：token 节流合并、正文与思考过程分离、结束与清理 |
 | `src/api/__tests__/sessionTrace.test.js` | 诊断日志：步骤记录、容量上限、导出、订阅与隐私（不记正文） |
+| `src/state/__tests__/configStore.test.js` | 配置与偏好：档案加载与旧版迁移、会话级 Key 不落盘、存储兜底、时间上下文 |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 | `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
@@ -224,8 +225,8 @@ morandi-chat/
 │  │  ├─ nativeTools.js    # 内置工具（fetch_url / todo_list）
 │  │  ├─ sessionTrace.js   # 本地诊断日志（轮次/工具/耗时/错误，不含正文）
 │  │  └─ todos.js          # 待办存储
-│  ├─ hooks/               # useConversationStore（对话 store）、useLiveStream、useContextBudget
-│  ├─ state/               # 纯逻辑：conversationTree（对话树）、liveStreamBuffer（流式缓冲）
+│  ├─ hooks/               # useConversationStore（对话 store）、useChatRunner（请求编排）、useLiveStream、useContextBudget
+│  ├─ state/               # 纯逻辑：conversationTree、liveStreamBuffer、configStore（档案与偏好）
 │  └─ components/          # ChatArea / MessageBubble / RichContent（代码高亮、JSON 面板）/ Sidebar / Settings …
 ```
 
