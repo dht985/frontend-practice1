@@ -79,18 +79,26 @@ VITE_FETCH_ENDPOINT=https://your-backend.example.com/fetch
 
 ### 线上抓取端点（部署后 fetch_url 才能真正可用）
 
-抓取代理是 Vite 的开发服务器插件，**只在本地 `npm run dev` 时存在**。部署到 GitHub Pages 后
-如果没配置端点，`fetch_url` 会直接提示「抓取端点未配置」——要么按下面部署一个端点，
-要么就别在工作台里启用这个工具。
+抓取代理是 Vite 的开发服务器插件，**只在本地 `npm run dev` 时存在**。所以部署到 GitHub Pages 后
+需要一个真正能出网、并且带 CORS 头的抓取源，`fetch_url` 才可用。有两种方式：
 
-仓库里自带一个可以直接部署的 Cloudflare Worker（`server/fetch-worker.js`，个人用量在免费额度内）：
+**方式一：第三方阅读服务（默认，零配置）**
+
+没有配置自建端点时，前端会自动改用 `r.jina.ai` 抓取并直接拿回抽取好的正文。
+不需要注册任何账号，部署完就能用。代价是：**目标网址会发送给该服务**，所以只适合抓公开网页；
+不放心可以在工作台「预置工具」里关掉这个开关，关掉后没配自建端点时 `fetch_url` 会直接给出提示。
+
+**方式二：自建端点（推荐给在意隐私的场景）**
+
+仓库里自带一个可以直接部署的 Cloudflare Worker（`server/fetch-worker.js`）：
 
 ```bash
 cd morandi-chat/server
 npx wrangler deploy     # 首次会要求登录 Cloudflare
 ```
 
-把输出的地址（形如 `https://morandi-fetch.<账号>.workers.dev`）配到两处：
+配好自建端点后**永远优先走自建端点**，不会静默把网址发给第三方。把输出的地址
+（形如 `https://morandi-fetch.<账号>.workers.dev`）配到两处：
 
 1. 线上：GitHub 仓库 → Settings → Secrets and variables → Actions → Variables，
    新增 `FETCH_ENDPOINT = <地址>`（部署工作流会在构建时注入）
@@ -176,7 +184,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-19 个测试文件、326 个用例（含整链路与 Worker 测试）：
+20 个测试文件、331 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -197,6 +205,7 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/state/__tests__/liveStreamBuffer.test.js` | 流式缓冲：token 节流合并、正文与思考过程分离、结束与清理 |
 | `src/api/__tests__/sessionTrace.test.js` | 诊断日志：步骤记录、容量上限、导出、订阅与隐私（不记正文） |
 | `src/state/__tests__/configStore.test.js` | 配置与偏好：档案加载与旧版迁移、会话级 Key 不落盘、存储兜底、时间上下文 |
+| `src/api/__tests__/fetcherTransport.test.js` | 抓取源选择：第三方兜底、自建端点优先、私网拦截、错误与开关行为 |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
 | `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
@@ -239,6 +248,8 @@ morandi-chat/
 - 单条附件载荷超过 32MB 时不做持久化（当次仍可正常发送，刷新后不可恢复）。
 - 抓取代理的 DNS 校验与实际连接之间仍有理论上的 rebinding 时间窗；要对外暴露时，
   建议在连接层把目标 IP 钉死，或加上端点鉴权 token。
+- 没有配置自建抓取端点时，抓取会经第三方阅读服务（`r.jina.ai`），**目标网址会发送给该服务**；
+  可在工作台「预置工具」里关闭，或按 README 部署自建端点。
 
 ## 常见问题
 

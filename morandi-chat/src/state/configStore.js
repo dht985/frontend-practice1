@@ -57,6 +57,8 @@ export const DEFAULT_WORKBENCH = {
   topP: 1,
   maxTokens: 0,
   contextWindow: 0, // 上下文窗口（tokens），0 = 用默认 128k；见 api/contextBudget.js
+  // 没有自建抓取端点时，是否允许用第三方阅读服务兜底（会把目标网址发给对方）
+  useThirdPartyFetch: true,
   stop: "",
   structured: false, // 结构化输出（JSON Mode），需服务商支持 response_format
   schemaText: "",    // 可选：期望的 JSON 结构说明 / JSON Schema

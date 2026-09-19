@@ -4,7 +4,8 @@
 //      发送 / 停止 / 继续生成 / 重试 / 换一个回答，以及本地诊断埋点。
 // App 只负责把「当前对话、配置、参数、数据表」传进来，拿回一组可直接绑到界面上的处理函数。
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { setAllowThirdPartyFetch } from "../api/fetcher";
 import { runFiber, streamChat } from "../api/chat";
 import { formatSize, kindOf, prepareAttachments } from "../api/files";
 import { runLocalTool } from "../api/tools";
@@ -58,6 +59,11 @@ export default function useChatRunner({
   const confirmResolversRef = useRef(new Map());
   // 仅放展示需要的信息（callId → {name, args}），触发气泡渲染确认按钮
   const [pendingConfirms, setPendingConfirms] = useState({});
+
+  // 把工作台里的「允许第三方抓取源」同步给抓取层（默认开启；自建端点始终优先）
+  useEffect(() => {
+    setAllowThirdPartyFetch(workbench.useThirdPartyFetch !== false);
+  }, [workbench.useThirdPartyFetch]);
 
   // 工具执行步骤回调（发送 / 继续共用）：start 追加 running 步骤，result 回填状态
   const toolStepHandler = (convId) => (step) => {

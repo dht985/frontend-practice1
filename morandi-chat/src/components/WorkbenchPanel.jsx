@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { NATIVE_TOOL_DECLS } from "../api/nativeTools";
+import { THIRD_PARTY_FETCH_HOST, hasCustomFetchEndpoint } from "../api/fetcher";
 import { clearTraces, exportTraces, subscribe as subscribeTraces, traceCount } from "../api/sessionTrace";
 
 // 诊断日志：本地会话 trace 的导出入口（只在内存里，不记正文）
@@ -529,6 +530,21 @@ export default function WorkbenchPanel({
                 </div>
               );
             })}
+
+            {/* fetch_url 的抓取源：自建端点优先；没有自建端点时可用第三方阅读服务兜底 */}
+            <label className="flex items-start gap-2 px-3 py-2 border border-line/70 rounded-xl bg-white/50 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={workbench.useThirdPartyFetch !== false}
+                onChange={(e) => set({ useThirdPartyFetch: e.target.checked })}
+                className="mt-0.5 accent-peach"
+              />
+              <span className="text-[11px] text-muted leading-snug">
+                没有自建抓取端点时，用第三方阅读服务（{THIRD_PARTY_FETCH_HOST}）兜底抓取。
+                <span className="text-peachdeep"> 开启后目标网址会发送给该服务</span>，只建议抓公开网页。
+                {hasCustomFetchEndpoint ? "（本构建已配置自建端点，优先走自建）" : ""}
+              </span>
+            </label>
           </section>
 
           {/* —— 自定义工具（Function Calling） —— */}

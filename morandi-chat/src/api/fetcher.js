@@ -12,6 +12,21 @@ const FETCH_ENDPOINT_CONFIGURED =
   Boolean(import.meta.env.VITE_FETCH_ENDPOINT) || Boolean(import.meta.env.DEV);
 // 可选令牌：与 Worker 的 FETCH_TOKEN 对应。前端包里可见，只是提高盗用门槛。
 const FETCH_TOKEN = import.meta.env.VITE_FETCH_TOKEN || "";
+// 没有自建端点时的兜底：第三方阅读服务（会把目标网址发给对方，因此只在允许时使用）。
+// 自建端点已配置时永远优先自建端点，不会静默把网址发给第三方。
+export const THIRD_PARTY_FETCH_HOST = "r.jina.ai";
+const THIRD_PARTY_FETCH_BASE = `https://${THIRD_PARTY_FETCH_HOST}/`;
+// 供界面提示：当前构建是否配置了自建抓取端点
+export const hasCustomFetchEndpoint = FETCH_ENDPOINT_CONFIGURED;
+
+// 是否允许在没有自建端点时用第三方源：由工作台设置同步过来（默认允许）
+let allowThirdPartyFetch = true;
+export function setAllowThirdPartyFetch(value) {
+  allowThirdPartyFetch = value !== false;
+}
+export function isThirdPartyFetchAllowed() {
+  return allowThirdPartyFetch;
+}
 const MAX_CONTENT_CHARS = 20_000; // 回传给模型的正文上限（约 6~8k tokens），超出截断
 
 const JUNK_TAGS = [
@@ -56,12 +71,42 @@ const BLOCK_TAGS = [
   "hr",
 ];
 
-// 仅校验 + 请求抓取端点，返回信封：{ ok, status, finalUrl, contentType, html, truncated, error }
-async function fetchPageEnvelope(url, signal) {
+// 第三方阅读服务兜底：返回的是已经抽取好的正文，前面带几行元信息
+async function fetchViaThirdParty(url, signal) {
+  const resp = await fetch(`${THIRD_PARTY_FETCH_BASE}${url}`, {
+    method: "GET",
+    headers: { accept: "text/plain" },
+    signal,
+  });
+  if (!resp.ok) {
+    let detail = "";
+    try {
+      detail = (await resp.text()).slice(0, 200);
+    } catch {
+      // 读体失败就只用状态码
+    }
+    throw new Error(`第三方抓取源返回 ${resp.status}${detail ? `：${detail}` : ""}`);
+  }
+  const raw = await resp.text();
+  const title = /^Title:\s*(.+)$/m.exec(raw)?.[1]?.trim() || "";
+  const text = raw
+    .split("\n")
+    .filter((line) => !/^(Title|URL Source|Published Time|Warning|Markdown Content):/i.test(line.trim()))
+    .join("\n")
+    .trim();
+  return { ok: true, status: 200, finalUrl: url, contentType: "text/plain", text, title };
+}
+
+// 请求抓取源，返回信封：{ ok, status, finalUrl, contentType, html | text, truncated, error }
+async function fetchPageEnvelope(url, signal, { allowThirdParty = true } = {}) {
   if (!FETCH_ENDPOINT_CONFIGURED) {
-    throw new Error(
-      "抓取端点未配置：线上部署需要把 VITE_FETCH_ENDPOINT 指向抓取服务（见 README「线上抓取端点」）；本地开发用 npm run dev 自带的代理即可"
-    );
+    if (!allowThirdParty) {
+      throw new Error(
+        "抓取端点未配置：可以把 VITE_FETCH_ENDPOINT 指向自建抓取服务（见 README「线上抓取端点」），或在工作台开启「第三方抓取源」"
+      );
+    }
+    // 生产构建没有 dev 代理、也没配自建端点：用第三方阅读服务兜底
+    return fetchViaThirdParty(url, signal);
   }
   const resp = await fetch(`${FETCH_ENDPOINT}?url=${encodeURIComponent(url)}`, {
     method: "GET",
@@ -188,11 +233,25 @@ export function truncateAtBoundary(text, max) {
   return { text: head.slice(0, cut).trimEnd(), truncated: true };
 }
 
-// fetch_url 入口：校验 URL（含私网/环回/云元数据拦截）→ 抓取 → 提取 → 截断，返回 { title, url, content, truncated }
-export async function fetchUrl(rawUrl, signal) {
+// fetch_url 入口：校验 URL（含私网/环回/云元数据拦截）→ 抓取 → 抽取 → 截断
+// 返回 { title, url, content, truncated }；走第三方源时额外带 source 字段
+export async function fetchUrl(rawUrl, signal, { allowThirdParty = allowThirdPartyFetch } = {}) {
   const url = assertSafeFetchUrl(rawUrl);
 
-  const env = await fetchPageEnvelope(url, signal);
+  const env = await fetchPageEnvelope(url, signal, { allowThirdParty });
+
+  // 第三方源直接给的是抽取好的正文，跳过本地 Readability
+  if (typeof env.text === "string") {
+    const cut = truncateAtBoundary(env.text, MAX_CONTENT_CHARS);
+    return {
+      title: env.title || "",
+      url: env.finalUrl || url,
+      content: cut.text,
+      truncated: cut.truncated,
+      source: THIRD_PARTY_FETCH_HOST,
+    };
+  }
+
   const { title, text } = extractReadable(env.html);
   // 正文超限：优先在段落/句子边界截断；代理层按字节截断也算 truncated
   const cut = truncateAtBoundary(text, MAX_CONTENT_CHARS);
