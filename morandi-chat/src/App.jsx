@@ -537,7 +537,6 @@ export default function App() {
           existing.status = step.needsConfirm ? "awaiting" : "running";
           existing.result = "";
           existing.retry = 0;
-          existing.manualRetry = false;
         } else {
           node.toolSteps.push({
             id: step.callId, name: step.name, source: step.source,
@@ -586,7 +585,7 @@ export default function App() {
     // 先把该行状态切回执行中
     updateLastVisible(conv.id, (n) => {
       const s = n.toolSteps?.find((x) => x.id === callId);
-      if (s) { s.status = "running"; s.result = ""; s.canRetry = false; s.manualRetry = false; }
+      if (s) { s.status = "running"; s.result = ""; s.canRetry = false; }
     });
     try {
       let resultStr = "";
@@ -614,7 +613,6 @@ export default function App() {
           s.status = isError ? "error" : "done";
           s.result = String(resultStr).slice(0, 120);
           s.canRetry = isError;
-          s.manualRetry = false;
         }
       });
       if (String(resultStr).length > 120) {
@@ -645,7 +643,6 @@ export default function App() {
           s.status = "error";
           s.result = String(err?.message || err).slice(0, 120);
           s.canRetry = true;
-          s.manualRetry = false;
         }
       });
     }

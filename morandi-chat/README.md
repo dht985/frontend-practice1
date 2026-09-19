@@ -116,9 +116,10 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 - `fetch_url` 的代理会拦截本机环回、私网、链路本地与云厂商元数据地址
   （`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`100.100.100.200`、
   `::1`、`fc00::/7` 等），只放行 http/https 的 80/443 端口，DNS 解析出的每个地址都会校验，
-  重定向逐跳校验（防「公网 302 到内网」），实现见 `urlGuard.js`。
-- 开发服务器默认监听局域网（`vite.config.js` 的 `host: true`，方便 VPN 下访问）。
-  如果不需要，把 `host` 改成 `127.0.0.1` 可减少暴露面。
+  重定向逐跳校验（防「公网 302 到内网」），实现见 `urlGuard.js`；浏览器端另有
+  `src/api/urlSafety.js` 在发请求前做一次快速预校验，两者互补（纵深防御）。
+- 开发服务器默认只监听本机环回（`vite.config.js` 的 `host: '127.0.0.1'`），减少暴露面
+  （`fetch_url` 代理也挂在上面）。需要在局域网或 VPN 下访问时，把 `host` 改回 `true`。
 - 代理不转发 Cookie，只抓取公开页面，超时 15 秒，响应体最多读 2MB。
 - 自定义工具代码在前端执行，等同你自己运行的脚本权限。
 
@@ -128,7 +129,7 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 npm test
 ```
 
-8 个测试文件、209 个用例：
+10 个测试文件、218 个用例：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -140,6 +141,8 @@ npm test
 | `src/api/__tests__/nativeTools.test.js` | 内置工具声明/开关/确认策略 |
 | `src/api/__tests__/toolSteps.test.js` | 工具步骤状态收口（停止/失败/等待确认）与场景回归 |
 | `src/api/__tests__/fullResultsStore.test.js` | 工具结果全文持久化 |
+| `src/api/__tests__/urlSafety.test.js` | 浏览器端 URL 预校验：localhost / 私网 / 链路本地 / 云元数据 / 非法输入 |
+| `src/components/__tests__/MessageBubble.test.jsx` | 消息气泡渲染：正文、思考块、JSON、工具步骤（@testing-library） |
 
 ## 项目结构
 
@@ -154,13 +157,14 @@ morandi-chat/
 │  │  ├─ providers.js      # 服务商预设与能力表
 │  │  ├─ files.js          # 附件按能力分流处理
 │  │  ├─ fetcher.js        # fetch_url 的传输层与正文提取
+│  │  ├─ urlSafety.js      # 浏览器端抓取 URL 预校验（localhost/私网/元数据）
 │  │  ├─ history.js        # 对话树 → 请求消息（含附件回灌）
 │  │  ├─ attachmentStore.js# 附件内容 IndexedDB 持久化
 │  │  ├─ fullResultsStore.js# 工具结果全文持久化
 │  │  ├─ tools.js          # 自定义工具编译/执行
 │  │  ├─ nativeTools.js    # 内置工具（fetch_url / todo_list）
 │  │  └─ todos.js          # 待办存储
-│  └─ components/          # ChatArea / MessageBubble / Sidebar / Settings / WorkbenchPanel …
+│  └─ components/          # ChatArea / MessageBubble / RichContent（代码高亮、JSON 面板）/ Sidebar / Settings …
 ```
 
 ## 已知限制
