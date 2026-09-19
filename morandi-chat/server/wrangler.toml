@@ -1,0 +1,21 @@
+# 线上抓取端点（Cloudflare Worker）配置
+#
+# 部署：在 morandi-chat/server 目录执行
+#   npx wrangler deploy
+# 之后把输出的 https://<worker>.<账号>.workers.dev 配到前端：
+#   - 本地：morandi-chat/.env.local 里写 VITE_FETCH_ENDPOINT=<地址>
+#   - 线上：GitHub 仓库 Settings → Secrets and variables → Actions → Variables
+#          新增 FETCH_ENDPOINT = <地址>（工作流会在构建时注入）
+
+name = "morandi-fetch"
+main = "fetch-worker.js"
+compatibility_date = "2026-01-01"
+workers_dev = true
+
+[vars]
+# 只允许你的站点跨域调用；本地开发再补一条 http://localhost:5173
+ALLOW_ORIGIN = "https://dht985.github.io"
+
+# 可选：想挡住随手盗用就设置令牌（前端包内可见，属于提高门槛而非真正保密）
+#   npx wrangler secret put FETCH_TOKEN
+# 然后在前端配 VITE_FETCH_TOKEN（同样放进 GitHub 的 Variables）

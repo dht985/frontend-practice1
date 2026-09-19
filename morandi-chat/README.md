@@ -74,6 +74,32 @@ npm run lint      # oxlint 静态检查
 VITE_FETCH_ENDPOINT=https://your-backend.example.com/fetch
 ```
 
+### 线上抓取端点（部署后 fetch_url 才能真正可用）
+
+抓取代理是 Vite 的开发服务器插件，**只在本地 `npm run dev` 时存在**。部署到 GitHub Pages 后
+如果没配置端点，`fetch_url` 会直接提示「抓取端点未配置」——要么按下面部署一个端点，
+要么就别在工作台里启用这个工具。
+
+仓库里自带一个可以直接部署的 Cloudflare Worker（`server/fetch-worker.js`，个人用量在免费额度内）：
+
+```bash
+cd morandi-chat/server
+npx wrangler deploy     # 首次会要求登录 Cloudflare
+```
+
+把输出的地址（形如 `https://morandi-fetch.<账号>.workers.dev`）配到两处：
+
+1. 线上：GitHub 仓库 → Settings → Secrets and variables → Actions → Variables，
+   新增 `FETCH_ENDPOINT = <地址>`（部署工作流会在构建时注入）
+2. 本地（可选）：`morandi-chat/.env.local` 里写 `VITE_FETCH_ENDPOINT=<地址>`；
+   不配则继续用 dev server 自带的代理
+
+Worker 与本地代理共用 `shared/ssrfGuard.js` 的同一套规则：拦截本机/内网/云元数据、
+只放行 80/443、DNS-over-HTTPS 校验解析出的每个地址、重定向逐跳校验、响应体上限 2MB。
+`server/wrangler.toml` 里的 `ALLOW_ORIGIN` 用于限制只有你的站点能跨域调用它；
+想再加一道门槛可以 `npx wrangler secret put FETCH_TOKEN` 并在前端配 `VITE_FETCH_TOKEN`
+（前端包里可见，属于提高盗用门槛，不是真正的机密）。
+
 ## 模型档案配置
 
 内置了 7 种服务商预设：Kimi、DeepSeek、通义千问（百炼）、智谱 GLM、OpenAI、
@@ -118,8 +144,9 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 - `fetch_url` 的代理会拦截本机环回、私网、链路本地与云厂商元数据地址
   （`127.0.0.0/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`100.100.100.200`、
   `::1`、`fc00::/7` 等），只放行 http/https 的 80/443 端口，DNS 解析出的每个地址都会校验，
-  重定向逐跳校验（防「公网 302 到内网」），实现见 `urlGuard.js`；浏览器端另有
-  `src/api/urlSafety.js` 在发请求前做一次快速预校验，两者互补（纵深防御）。
+  重定向逐跳校验（防「公网 302 到内网」）。规则本体在 `shared/ssrfGuard.js`，
+  Node 端（本地代理）与线上 Worker（`server/fetch-worker.js`）共用同一份；
+  浏览器端另有 `src/api/urlSafety.js` 在发请求前做一次快速预校验（纵深防御）。
 - 开发服务器默认只监听本机环回（`vite.config.js` 的 `host: '127.0.0.1'`），减少暴露面
   （`fetch_url` 代理也挂在上面）。需要在局域网或 VPN 下访问时，把 `host` 改回 `true`。
 - 代理不转发 Cookie，只抓取公开页面，超时 15 秒，响应体最多读 2MB。
@@ -133,7 +160,7 @@ npm test
 
 GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败就不部署。
 
-13 个测试文件、260 个用例（含整链路测试）：
+14 个测试文件、272 个用例（含整链路与 Worker 测试）：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -150,13 +177,16 @@ GitHub Pages 的部署工作流会在构建前先跑 `npm test`，测试失败�
 | `src/api/__tests__/providers.test.js` | 生成参数能力：推理模型（kimi-k3 变体 / reasoner / o 系列）不发送采样参数 |
 | `src/api/__tests__/contextBudget.test.js` | 上下文预算：中英文与多模态/附件的 token 估算、按预算整轮裁剪、最后一轮永远保留 |
 | `src/__tests__/App.integration.test.jsx` | 整链路：真 SSE 流式回复、工具调用循环、停止/继续生成、带附件重试、超预算裁剪与提示 |
+| `src/__tests__/fetchWorker.test.js` | 线上抓取端点：私网/元数据/本机域名拦截、DoH 解析后校验、重定向跳转拦截、令牌与 CORS |
 
 ## 项目结构
 
 ```
 morandi-chat/
 ├─ fetch-proxy.js          # 开发期抓取代理（Vite 插件），含安全校验入口
-├─ urlGuard.js             # 出网目标安全校验（私网/元数据/端口/重定向）
+├─ urlGuard.js             # Node 端出网校验：DNS 解析 + 逐地址判定
+├─ shared/ssrfGuard.js     # 出网安全规则本体（本地代理与线上 Worker 共用）
+├─ server/                 # 线上抓取端点：Cloudflare Worker + wrangler 配置
 ├─ src/
 │  ├─ App.jsx              # 状态中枢：对话树、流式、工具循环、持久化
 │  ├─ api/

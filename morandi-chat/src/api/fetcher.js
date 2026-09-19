@@ -6,6 +6,12 @@ import { Readability } from "@mozilla/readability";
 import { assertSafeFetchUrl } from "./urlSafety";
 
 const FETCH_ENDPOINT = import.meta.env.VITE_FETCH_ENDPOINT || "/__fetch__";
+// 线上部署必须显式配置抓取端点：dev server 的代理只在本地开发时存在，
+// 生产构建里没有它，硬编码的 /__fetch__ 只会 404（见 README「线上抓取端点」）。
+const FETCH_ENDPOINT_CONFIGURED =
+  Boolean(import.meta.env.VITE_FETCH_ENDPOINT) || Boolean(import.meta.env.DEV);
+// 可选令牌：与 Worker 的 FETCH_TOKEN 对应。前端包里可见，只是提高盗用门槛。
+const FETCH_TOKEN = import.meta.env.VITE_FETCH_TOKEN || "";
 const MAX_CONTENT_CHARS = 20_000; // 回传给模型的正文上限（约 6~8k tokens），超出截断
 
 const JUNK_TAGS = [
@@ -52,17 +58,31 @@ const BLOCK_TAGS = [
 
 // 仅校验 + 请求抓取端点，返回信封：{ ok, status, finalUrl, contentType, html, truncated, error }
 async function fetchPageEnvelope(url, signal) {
+  if (!FETCH_ENDPOINT_CONFIGURED) {
+    throw new Error(
+      "抓取端点未配置：线上部署需要把 VITE_FETCH_ENDPOINT 指向抓取服务（见 README「线上抓取端点」）；本地开发用 npm run dev 自带的代理即可"
+    );
+  }
   const resp = await fetch(`${FETCH_ENDPOINT}?url=${encodeURIComponent(url)}`, {
     method: "GET",
-    headers: { accept: "application/json" },
+    headers: {
+      accept: "application/json",
+      ...(FETCH_TOKEN ? { "x-fetch-token": FETCH_TOKEN } : {}),
+    },
     signal,
   });
   if (!resp.ok) {
     let detail = "";
+    let isJsonError = true;
     try {
       detail = (await resp.json())?.error || "";
     } catch {
-      // 非 JSON 错误响应
+      isJsonError = false;
+    }
+    if (resp.status === 404 && !isJsonError) {
+      throw new Error(
+        "抓取端点不存在 (404)：请确认 VITE_FETCH_ENDPOINT 指向已部署的抓取服务（见 README「线上抓取端点」）"
+      );
     }
     // 消息保留状态码，上层 isRetryableError 可据此分类（502/504 可重试，415 不可重试）
     throw new Error(`抓取失败 (${resp.status})${detail ? `：${detail}` : ""}`);

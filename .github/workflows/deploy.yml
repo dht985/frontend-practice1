@@ -37,6 +37,10 @@ jobs:
 
       - name: Build Morandi Chat
         working-directory: ./morandi-chat
+        env:
+          # 仓库 Settings → Secrets and variables → Actions → Variables 里配置；未配置则为空
+          VITE_FETCH_ENDPOINT: ${{ vars.FETCH_ENDPOINT }}
+          VITE_FETCH_TOKEN: ${{ vars.FETCH_TOKEN }}
         run: npm run build
 
       - name: Copy build output to root
