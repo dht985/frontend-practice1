@@ -388,6 +388,21 @@ export default function WorkbenchPanel({
               />
               <p className="text-[10px] text-muted/80 mt-0.5">0 表示不限制（使用模型默认上限）</p>
             </div>
+            <div>
+              <label className="block text-[13px] text-ink font-medium mb-1">上下文窗口（tokens）</label>
+              <input
+                type="number"
+                min={0}
+                step={1000}
+                value={workbench.contextWindow ?? 0}
+                onChange={(e) => set({ contextWindow: Math.max(0, Number(e.target.value) || 0) })}
+                className="w-full px-3 py-2 border border-line rounded-xl outline-none text-[13px]
+                           text-ink bg-white/70 focus:border-peach"
+              />
+              <p className="text-[10px] text-muted/80 mt-0.5">
+                0 表示用默认 128k；超出预算时会自动省略最早的整轮对话（含附件）
+              </p>
+            </div>
             <div className={paramCaps.stop ? "" : "opacity-50"}>
               <label className="block text-[13px] text-ink font-medium mb-1">停止序列</label>
               <input
@@ -582,6 +597,7 @@ export default function WorkbenchPanel({
                 temperature: 0.7,
                 topP: 1,
                 maxTokens: 0,
+                contextWindow: 0,
                 stop: "",
                 structured: false,
                 schemaText: "",

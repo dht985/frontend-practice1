@@ -21,7 +21,7 @@ const SUGGESTIONS = [
   { icon: "✍️", dot: "bg-blush/80", title: "润色文字", text: "帮我把一段话润色得更专业、更简洁" },
 ];
 
-export default function ChatArea({ messages, entries = [], liveStream = null, isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
+export default function ChatArea({ messages, entries = [], liveStream = null, trimNotice = null, isStreaming, model, webSearchAvailable = false, agentAvailable = false, onSend, onStop, onContinue, canContinue, onRetry, onRegenerate, onExport, onOpenWorkbench, onSwitchVersion, onOpenSidebar, profiles = [], activeProfileId, onSwitchProfile, pendingConfirms = {}, onRespondToolConfirm, onRetryTool, fullResultsMap }) {
   // 传给 MessageBubble 的回调统一用 ref 转发：它是 React.memo 组件，
   // 回调引用每次渲染都变的话 memo 会完全失效。
   const cbRef = useRef({});
@@ -385,6 +385,13 @@ export default function ChatArea({ messages, entries = [], liveStream = null, is
 
       {/* 输入区 */}
       <div className="relative z-10 px-3 md:px-6 pb-4 md:pb-6 pt-2">
+          {/* 上下文预算提示：本次发送省略了较早的整轮对话 */}
+          {trimNotice && (
+            <div className="mb-2 px-3 py-2 rounded-xl bg-peachsoft/60 border border-peach/40
+                            text-[11px] text-ink/80 leading-relaxed">
+              {`本次发送省略了最早的 ${trimNotice.droppedTurns} 轮对话以适配上下文预算（约 ${trimNotice.estimatedTokens.toLocaleString()} / ${trimNotice.budgetTokens.toLocaleString()} tokens）。完整内容仍保留在本机，可在上方翻看或导出。`}
+            </div>
+          )}
         <div className="max-w-3xl mx-auto">
           <div
             className="flex flex-col gap-2.5 bg-white/90 border border-line rounded-2xl px-4 pt-3 pb-3

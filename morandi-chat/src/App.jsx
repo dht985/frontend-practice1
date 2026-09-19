@@ -30,6 +30,12 @@ import {
   userContentWithAttachments,
   DEFAULT_ATTACHMENT_PROMPT,
 } from "./api/history";
+import {
+  DEFAULT_CONTEXT_WINDOW,
+  estimateMessagesTokens,
+  reservedOutputTokens,
+  trimNodesToBudget,
+} from "./api/contextBudget";
 
 const STORAGE_KEY = "morandi-chat-conversations";
 const CONFIG_KEY = "morandi-chat-config";
@@ -85,6 +91,7 @@ const DEFAULT_WORKBENCH = {
   temperature: 0.7,
   topP: 1,
   maxTokens: 0,
+  contextWindow: 0, // 上下文窗口（tokens），0 = 用默认 128k；见 api/contextBudget.js
   stop: "",
   structured: false, // 结构化输出（JSON Mode），需服务商支持 response_format
   schemaText: "",    // 可选：期望的 JSON 结构说明 / JSON Schema
@@ -250,6 +257,8 @@ export default function App() {
   const [todoPanelOpen, setTodoPanelOpen] = useState(false);
   const [todoBadge, setTodoBadge] = useState(0); // 侧边栏待办入口的未完成角标
   const [storageError, setStorageError] = useState(null); // localStorage 配额等
+  // 上一次发送因上下文预算被裁剪掉的历史（仅用于界面提示）
+  const [trimNotice, setTrimNotice] = useState(null);
   // 附件内容（多模态 parts / 文档抽取文本）：按 user 节点 id 保存，
   // 树里只留元信息；重试、换回答、后续轮次都从这里取回原始附件。
   const attachmentsRef = useRef(new Map());
@@ -526,6 +535,27 @@ export default function App() {
     });
   };
 
+  // 按上下文预算裁剪历史：固定部分（system 提示、本轮提问、回灌内容）先扣掉，
+  // 再从最早的整轮开始丢弃。裁剪结果通过 trimNotice 回报给界面。
+  const planHistory = (nodes, { convId, systemMessages = [], extraFixed = [] }) => {
+    const plan = trimNodesToBudget(nodes, attachmentsRef.current, {
+      budgetTokens: workbench.contextWindow || DEFAULT_CONTEXT_WINDOW,
+      reservedTokens: reservedOutputTokens(workbench.maxTokens),
+      fixedTokens: estimateMessagesTokens([...systemMessages, ...extraFixed]),
+    });
+    setTrimNotice(
+      plan.droppedTurns > 0
+        ? {
+            convId,
+            droppedTurns: plan.droppedTurns,
+            estimatedTokens: plan.estimatedTokens,
+            budgetTokens: plan.budgetTokens,
+          }
+        : null
+    );
+    return plan;
+  };
+
   // 工具执行步骤回调（发送 / 继续共用）：start 追加 running 步骤，result 回填状态
   const toolStepHandler = (convId) => (step) => {
     updateLastVisible(convId, (node) => {
@@ -673,17 +703,14 @@ export default function App() {
     userStoppedRef.current = false;
 
     // 历史 = 已有对话（含已生成的不完整 AI 回答），让模型接着续写；带附件
-    const history = buildHistoryMessages(
-      chain
-        .map((e) => e.node)
-        .filter(
-          (m) =>
-            (m.role === "user" || m.role === "assistant") &&
-            m.content &&
-            !String(m.content).startsWith("⚠️")
-        ),
-      attachmentsRef.current
-    );
+    const chainNodes = chain
+      .map((e) => e.node)
+      .filter(
+        (m) =>
+          (m.role === "user" || m.role === "assistant") &&
+          m.content &&
+          !String(m.content).startsWith("⚠️")
+      );
 
     const boost = {
       role: "system",
@@ -692,13 +719,19 @@ export default function App() {
         String(resultStr).slice(0, 12000),
     };
 
+    // 上下文预算：先把固定部分（system 提示 + 回灌的工具结果）扣掉，再按整轮裁剪历史
+    const plan = planHistory(chainNodes, {
+      convId,
+      systemMessages: [...customSystemMessages(), buildTimeMessage(), boost],
+    });
+
     await streamChat({
-      messages: history,
+      messages: buildHistoryMessages(plan.nodes, attachmentsRef.current),
       systemMessages: [
         ...customSystemMessages(),
         buildTimeMessage(),
         boost,
-        ...attachmentSystemMessages(chain.map((e) => e.node), attachmentsRef.current),
+        ...attachmentSystemMessages(plan.nodes, attachmentsRef.current),
       ],
       config: activeConfig,
       webSearch: false,
@@ -987,17 +1020,7 @@ export default function App() {
     // 不支持的文件（音频等）给模型一条说明，让它在回答里告知用户
     const noteMessages = skippedFileMessages(retry || regenerate ? retriedPayload?.skipped : prepared.skipped);
 
-    // 文档类附件的内容是以 system 消息注入的：重试 / 换回答时要把这一轮的文档内容一起带上，
-    // 否则模型只看到「用户上传了文件」的提问，却拿不到文件正文。
-    const attachmentNodes =
-      (retry || regenerate) && retriedUserNode ? [...baseNodes, retriedUserNode] : baseNodes;
 
-    // 发给 API 的历史：过滤空消息、前端 UI 字段、⚠️ 错误气泡；
-    // 历史里 user 节点的附件会按节点 id 自动补回（多轮对话不再丢文件）
-    const history = [
-      ...buildHistoryMessages(baseNodes, attachmentsRef.current, { webSearch: useWebSearch }),
-      { role: "user", content: apiUserContent },
-    ];
 
     // 联网搜索开启时，明确告知模型工具可用，并要求在回答末尾附参考链接
     const webSearchPrompt = useWebSearch
@@ -1019,18 +1042,34 @@ export default function App() {
         }]
       : [];
 
+    // 上下文预算：先把固定部分（system 提示 + 本轮提问与附件）扣掉，
+    // 再按「整轮」从最早处裁剪历史，避免把请求撑爆服务商窗口。
+    const systemBase = [
+      ...customSystemMessages(),
+      buildTimeMessage(),
+      ...webSearchPrompt,
+      ...agentPrompt,
+      ...noteMessages,
+    ];
+    const budgetPlan = planHistory(baseNodes, {
+      convId,
+      systemMessages: systemBase,
+      extraFixed: [...prepared.systemMessages, { role: "user", content: apiUserContent }],
+    });
+    const history = [
+      ...buildHistoryMessages(budgetPlan.nodes, attachmentsRef.current, { webSearch: useWebSearch }),
+      { role: "user", content: apiUserContent },
+    ];
+
     // 流式文本写进独立的 liveStream：token 不再触发对话树更新与全量重渲染
     beginLiveStream(convId, liveNodeId, "");
 
     await streamChat({
       messages: history,
       systemMessages: [
-        ...customSystemMessages(),
-        buildTimeMessage(),
-        ...webSearchPrompt,
-        ...agentPrompt,
-        ...attachmentSystemMessages(attachmentNodes, attachmentsRef.current),
-        ...noteMessages,
+        ...systemBase,
+        ...attachmentSystemMessages(budgetPlan.nodes, attachmentsRef.current),
+        ...(retry || regenerate ? retriedPayload?.systemMessages || [] : []),
         ...prepared.systemMessages,
       ],
       config: activeConfig,
@@ -1114,23 +1153,25 @@ export default function App() {
       userStoppedRef.current = false;
 
       // 历史 = 已有对话（末尾那条空 assistant 消息过滤掉），并带上历史附件
-      const history = buildHistoryMessages(
-        chain
-          .map((e) => e.node)
-          .filter(
-            (m) =>
-              (m.role === "user" || (m.role === "assistant" && m.content)) &&
-              !String(m.content).startsWith("⚠️")
-          ),
-        attachmentsRef.current
-      );
+      const chainNodes = chain
+        .map((e) => e.node)
+        .filter(
+          (m) =>
+            (m.role === "user" || (m.role === "assistant" && m.content)) &&
+            !String(m.content).startsWith("⚠️")
+        );
+      // 上下文预算：超限时从最早的整轮开始省略
+      const plan = planHistory(chainNodes, {
+        convId,
+        systemMessages: [...customSystemMessages(), buildTimeMessage()],
+      });
 
       await streamChat({
-        messages: history,
+        messages: buildHistoryMessages(plan.nodes, attachmentsRef.current),
         systemMessages: [
           ...customSystemMessages(),
           buildTimeMessage(),
-          ...attachmentSystemMessages(chain.map((e) => e.node), attachmentsRef.current),
+          ...attachmentSystemMessages(plan.nodes, attachmentsRef.current),
         ],
         config: activeConfig,
         webSearch: false,
@@ -1162,24 +1203,26 @@ export default function App() {
     userStoppedRef.current = false;
 
     // 历史 = 已有对话（含已生成的不完整 AI 回答），让模型接着续写；带附件
-    const history = buildHistoryMessages(
-      chain
-        .map((e) => e.node)
-        .filter(
-          (m) =>
-            (m.role === "user" || m.role === "assistant") &&
-            m.content &&
-            !String(m.content).startsWith("⚠️")
-        ),
-      attachmentsRef.current
-    );
+    const chainNodes = chain
+      .map((e) => e.node)
+      .filter(
+        (m) =>
+          (m.role === "user" || m.role === "assistant") &&
+          m.content &&
+          !String(m.content).startsWith("⚠️")
+      );
+    // 上下文预算：超限时从最早的整轮开始省略
+    const plan = planHistory(chainNodes, {
+      convId,
+      systemMessages: [...customSystemMessages(), buildTimeMessage()],
+    });
 
     await streamChat({
-      messages: history,
+      messages: buildHistoryMessages(plan.nodes, attachmentsRef.current),
       systemMessages: [
         ...customSystemMessages(),
         buildTimeMessage(),
-        ...attachmentSystemMessages(chain.map((e) => e.node), attachmentsRef.current),
+        ...attachmentSystemMessages(plan.nodes, attachmentsRef.current),
       ],
       config: activeConfig,
       webSearch: false,
@@ -1266,6 +1309,7 @@ export default function App() {
         messages={messages}
         entries={visibleEntries}
         liveStream={liveStream}
+        trimNotice={trimNotice && trimNotice.convId === activeId ? trimNotice : null}
         onSwitchVersion={switchVersion}
         isStreaming={isStreaming}
         model={`${getProvider(activeConfig.provider).name} · ${activeConfig.model || "未设置模型"}`}

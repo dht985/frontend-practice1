@@ -12,6 +12,11 @@ const ATTACHMENT_ICON = {
   unknown: "📎",
 };
 
+// 来源链接来自联网搜索接口的返回结果，属于不可信外部输入：
+// 只允许 http/https，拦截 javascript: 等危险协议，避免渲染成可点击的存储型 XSS
+const SAFE_URL = /^https?:\/\//i;
+const safeUrl = (u) => (typeof u === "string" && SAFE_URL.test(u) ? u : "");
+
 // Agent 工具调用步骤：生成中实时显示进度，完成后折叠为「工具调用 · N 步」可展开详情
 function StepIcon({ status }) {
   if (status === "running") {
@@ -457,17 +462,28 @@ function MessageBubble({ message: rawMessage, index, streamingText = null, strea
                 参考来源
               </p>
               <div className="space-y-1">
-                {message.sources.map((s, i) => (
-                  <a
-                    key={i}
-                    href={s.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-[11px] text-sagedeep hover:text-peachdeep transition-colors truncate"
-                  >
-                    {i + 1}. {s.title || s.url}
-                  </a>
-                ))}
+                {message.sources.map((s, i) => {
+                  const href = safeUrl(s.url);
+                  return href ? (
+                    <a
+                      key={i}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-[11px] text-sagedeep hover:text-peachdeep transition-colors truncate"
+                    >
+                      {i + 1}. {s.title || s.url}
+                    </a>
+                  ) : (
+                    <span
+                      key={i}
+                      className="block text-[11px] text-muted/70 truncate"
+                      title="已拦截非 http/https 链接"
+                    >
+                      {i + 1}. {s.title || s.url}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}
