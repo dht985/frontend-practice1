@@ -129,7 +129,7 @@ OpenRouter、自定义（任意 OpenAI 兼容接口）。能力差异写在 `src
 npm test
 ```
 
-10 个测试文件、218 个用例：
+11 个测试文件、235 个用例：
 
 | 文件 | 覆盖内容 |
 | --- | --- |
@@ -143,6 +143,7 @@ npm test
 | `src/api/__tests__/fullResultsStore.test.js` | 工具结果全文持久化 |
 | `src/api/__tests__/urlSafety.test.js` | 浏览器端 URL 预校验：localhost / 私网 / 链路本地 / 云元数据 / 非法输入 |
 | `src/components/__tests__/MessageBubble.test.jsx` | 消息气泡渲染：正文、思考块、JSON、工具步骤（@testing-library） |
+| `src/api/__tests__/providers.test.js` | 生成参数能力：推理模型（kimi-k3 变体 / reasoner / o 系列）不发送采样参数 |
 
 ## 项目结构
 
